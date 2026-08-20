@@ -1,0 +1,38 @@
+{% comment %}
+  Optional product-page notice block for Contrarian Product Rules.
+  Pickup-only display logic will be added after the scaffold is verified.
+{% endcomment %}
+
+<div
+  class="cpr-notice"
+  data-cpr-notice
+  {{ block.shopify_attributes }}
+>
+  <strong>{{ block.settings.heading }}</strong>
+
+  {% if block.settings.message != blank %}
+    <p>{{ block.settings.message }}</p>
+  {% endif %}
+</div>
+
+{% schema %}
+{
+  "name": "Product rule notice",
+  "target": "section",
+  "templates": ["product"],
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Product Notice"
+    },
+    {
+      "type": "textarea",
+      "id": "message",
+      "label": "Message",
+      "default": "Contrarian Product Rules is connected."
+    }
+  ]
+}
+{% endschema %}

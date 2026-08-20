@@ -1,0 +1,27 @@
+{% comment %}
+  Contrarian Product Rules storefront embed.
+
+  The pickup-only rule will be implemented here in the next stage.
+  This initial scaffold only verifies that the app embed loads.
+{% endcomment %}
+
+<div
+  data-cpr-app
+  data-cpr-version="0.1.0"
+  hidden
+></div>
+
+{% schema %}
+{
+  "name": "Contrarian Product Rules",
+  "target": "body",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "debug_mode",
+      "label": "Enable debug mode",
+      "default": false
+    }
+  ]
+}
+{% endschema %}

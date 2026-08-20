@@ -1,0 +1,11 @@
+/*
+ * Contrarian Product Rules
+ * Storefront styles
+ *
+ * Version 0.2.0 only verifies asset loading and rule detection.
+ * Customer-facing popover styles will be added after detection is confirmed.
+ */
+
+html.cpr-has-pickup-only-rule {
+  --cpr-pickup-rule-active: 1;
+}

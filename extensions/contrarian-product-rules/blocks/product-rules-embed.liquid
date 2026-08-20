@@ -1,13 +1,32 @@
 {% comment %}
   Contrarian Product Rules storefront embed.
 
-  The pickup-only rule will be implemented here in the next stage.
-  This initial scaffold only verifies that the app embed loads.
+  Version 0.2.0:
+  - Detects the existing pickup-only product metafield
+  - Exposes rule information to storefront JavaScript
+  - Does not intercept Add to Cart yet
 {% endcomment %}
+
+{%- liquid
+  assign cpr_is_product_page = false
+  assign cpr_pickup_only = false
+
+  if request.page_type == 'product' and product != blank
+    assign cpr_is_product_page = true
+    assign cpr_pickup_only = product.metafields.custom.in_store_pickup_only.value
+  endif
+-%}
 
 <div
   data-cpr-app
-  data-cpr-version="0.1.0"
+  data-cpr-version="0.2.0"
+  data-cpr-debug="{{ block.settings.debug_mode }}"
+  data-cpr-product-page="{{ cpr_is_product_page }}"
+  {% if cpr_is_product_page %}
+    data-cpr-product-id="{{ product.id }}"
+    data-cpr-product-handle="{{ product.handle | escape }}"
+    data-cpr-pickup-only="{{ cpr_pickup_only }}"
+  {% endif %}
   hidden
 ></div>
 
@@ -15,6 +34,8 @@
 {
   "name": "Contrarian Product Rules",
   "target": "body",
+  "javascript": "product-rules.js",
+  "stylesheet": "product-rules.css",
   "settings": [
     {
       "type": "checkbox",

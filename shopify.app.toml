@@ -7,7 +7,7 @@ embedded = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,read_shipping,write_shipping"
+scopes = "read_products,write_products,read_orders,write_orders,read_shipping,write_shipping,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders"
 
 [product.metafields.contrarian_product_rules.rules]
 type = "json"
@@ -51,6 +51,10 @@ api_version = "2026-10"
   [[webhooks.subscriptions]]
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders_create"
+  topics = [ "orders/create" ]
 
 [auth]
 redirect_urls = [

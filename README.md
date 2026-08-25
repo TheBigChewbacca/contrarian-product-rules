@@ -39,6 +39,15 @@ After a customer submits Add to cart or Buy it now for an enabled Pickup Only
 product, the theme extension displays a confirmation message. This is
 presentation feedback, not checkout enforcement.
 
+Orders containing an enabled preorder product are processed by the
+`orders/create` webhook. The app uses the latest preorder release date in the
+order, adds 10 calendar days for the expected delivery date, stores that date
+in the order note, and adds a `Preorder YYYY-MM-DD` tag. Open fulfillment orders
+are placed on hold for the preorder. The whole order is held when it contains a
+mix of preorder and regular items. Installing or updating this workflow
+requires the order and fulfillment-order scopes in `shopify.app.toml`, so the
+store must reauthorize the app after those scopes change.
+
 This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [React Router](https://reactrouter.com/). It was forked from the [Shopify Remix app template](https://github.com/Shopify/shopify-app-template-remix) and converted to React Router.
 
 Rather than cloning this repo, follow the [Quick Start steps](https://github.com/Shopify/shopify-app-template-react-router#quick-start).

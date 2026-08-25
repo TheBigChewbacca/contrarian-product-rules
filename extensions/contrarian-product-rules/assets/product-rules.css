@@ -10,6 +10,17 @@ html.cpr-has-pickup-only-rule {
   --cpr-pickup-rule-active: 1;
 }
 
+html.cpr-has-preorder-rule .product__pickup-availabilities,
+html.cpr-has-preorder-rule pickup-availability,
+html.cpr-has-preorder-rule [data-pickup-availability],
+html.cpr-has-preorder-rule .pickup-availability-preview {
+  display: none !important;
+}
+
+html.cpr-has-preorder-rule .pickup-availability {
+  display: none !important;
+}
+
 .cpr-pickup-only-notice {
   box-sizing: border-box;
   max-width: 100%;
@@ -25,9 +36,41 @@ html.cpr-has-pickup-only-rule {
   white-space: normal;
 }
 
+.cpr-preorder {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: CanvasText;
+  background: Canvas;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+
+.cpr-preorder__badge {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 0.875em;
+  font-weight: 700;
+}
+
+.cpr-preorder__message,
+.cpr-preorder__countdown {
+  margin: 0;
+}
+
+.cpr-preorder__countdown {
+  margin-top: 0.5rem;
+}
+
 .cpr-add-confirmation {
   position: absolute;
-  right: 0;
+  right: auto;
   bottom: 0;
   left: 0;
   z-index: 10;

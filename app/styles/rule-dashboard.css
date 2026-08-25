@@ -1,0 +1,212 @@
+.rule-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid #d7d9dc;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.rule-tab {
+  appearance: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: #4b4f54;
+  cursor: pointer;
+  padding: 1rem 1.25rem 0.85rem;
+  font: inherit;
+  font-weight: 600;
+}
+
+.rule-tab.active {
+  border-bottom-color: #1f1f1f;
+  color: #1f1f1f;
+}
+
+.rule-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.rule-actions {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.rule-search {
+  display: flex;
+  gap: 0.5rem;
+  min-width: min(100%, 24rem);
+}
+
+.rule-search input {
+  min-width: 0;
+  flex: 1;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #aeb1b4;
+  border-radius: 7px;
+  font: inherit;
+}
+
+.rule-search button,
+.actions button {
+  border: 1px solid #202124;
+  border-radius: 7px;
+  background: #292a2c;
+  color: #fff;
+  cursor: pointer;
+  padding: 0.65rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+}
+
+.rule-count {
+  color: #686c70;
+  margin: 1rem 0;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.pagination button {
+  border: 1px solid #b9bdc1;
+  border-radius: 7px;
+  background: #fff;
+  color: #343638;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  font: inherit;
+  font-weight: 600;
+}
+
+.rule-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #d7d9dc;
+  border-radius: 8px;
+}
+
+.rule-table {
+  width: 100%;
+  min-width: 42rem;
+  border-collapse: collapse;
+  color: #3e4246;
+}
+
+.rule-table th,
+.rule-table td {
+  padding: 1rem 0.85rem;
+  border-bottom: 1px solid #e4e5e7;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.rule-table thead {
+  background: #e2e4e6;
+  color: #34373a;
+  font-size: 0.9rem;
+}
+
+.rule-table tbody th {
+  font-weight: 500;
+}
+
+.rule-table tbody tr:last-child th,
+.rule-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.product-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.product-cell img {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  object-fit: cover;
+  background: #f0f1f2;
+}
+
+.status {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  display: inline-block;
+  min-width: 3rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.status.on {
+  background: #343638;
+  color: #fff;
+}
+
+.status.off {
+  background: #e1e3e5;
+  color: #6b7074;
+}
+
+.status:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 3rem;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.edit-button {
+  min-height: 2.25rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #b9bdc1;
+  border-radius: 7px;
+  background: #fff;
+  color: #343638;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.actions button {
+  background: transparent;
+  color: #343638;
+  border-color: #b9bdc1;
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+@media (max-width: 40rem) {
+  .rule-tab {
+    flex: 1;
+    padding-inline: 0.5rem;
+  }
+
+  .rule-search {
+    width: 100%;
+  }
+}

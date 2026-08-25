@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
@@ -29,8 +29,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
-  const productIds = JSON.parse(String(formData.get("productIds") || "[]")) as unknown;
-  const selectedIds = Array.isArray(productIds) ? productIds.filter((id): id is string => typeof id === "string") : [];
+  let productIds: unknown;
+  try {
+    productIds = JSON.parse(String(formData.get("productIds") || "[]"));
+  } catch {
+    return { ok: false, errors: [{ message: "The selected products could not be read." }] };
+  }
+  const selectedIds = Array.isArray(productIds)
+    ? [...new Set(productIds.filter((id): id is string => typeof id === "string"))]
+    : [];
   if (selectedIds.length === 0) return { ok: false, errors: [{ message: "Select at least one product before saving." }] };
 
   const preorder: PreorderRule = {
@@ -39,7 +46,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     message: String(formData.get("message") || "").trim() || DEFAULT_PREORDER_MESSAGE,
     badgeText: String(formData.get("badgeText") || "").trim() || DEFAULT_PREORDER_BADGE,
     showCountdown: formData.get("showCountdown") === "true",
-    appliedTo: [],
   };
   const results = await Promise.all(selectedIds.map(async (productId) => {
     const product = await loadProduct(admin, productId);
@@ -64,13 +70,15 @@ function productFromPicker(value: unknown): RuleTarget | null {
 export default function PreorderPage() {
   const initial = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
   const shopify = useAppBridge();
   const [preorder, setPreorder] = useState<PreorderRule>(initial.preorder);
-  const [targets, setTargets] = useState<RuleTarget[]>(initial.preorder.appliedTo);
+  const [targets, setTargets] = useState<RuleTarget[]>(
+    initial.product ? [createRuleTarget(initial.product.id, initial.product.title)] : [],
+  );
 
   useEffect(() => {
     setPreorder(initial.preorder);
-    setTargets(initial.preorder.appliedTo);
   }, [initial]);
 
   useEffect(() => {
@@ -84,6 +92,9 @@ export default function PreorderPage() {
       return target ? [target] : [];
     }) : [];
     setTargets((current) => mergeRuleTargets(current, picked));
+    if (picked[0]) {
+      navigate(`/app/preorder?productId=${encodeURIComponent(picked[0].id)}`);
+    }
   };
 
   const update = (changes: Partial<PreorderRule>) => setPreorder((current) => ({ ...current, ...changes }));

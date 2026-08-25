@@ -22,6 +22,7 @@
   data-cpr-version="1.0.0"
   data-cpr-debug="{{ block.settings.debug_mode }}"
   data-cpr-product-page="{{ cpr_is_product_page }}"
+  data-cpr-store-timezone="{{ shop.timezone | escape }}"
   {% if cpr_is_product_page %}
     data-cpr-product-id="{{ product.id }}"
     data-cpr-product-handle="{{ product.handle | escape }}"

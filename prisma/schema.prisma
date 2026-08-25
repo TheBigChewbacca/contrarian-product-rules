@@ -32,3 +32,8 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model ShopSettings {
+  shop                     String  @id
+  pickupShippingProfileId  String?
+}

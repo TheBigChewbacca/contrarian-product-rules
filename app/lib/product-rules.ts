@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PICKUP_ONLY_MESSAGE,
   createPickupOnlyRule,
   parseRuleSet,
   type ProductRule,
@@ -8,8 +9,6 @@ import {
 } from "./rule-engine";
 
 export const CURRENT_RULES_VERSION = 1;
-export const DEFAULT_PICKUP_ONLY_MESSAGE =
-  "This item is available for in-store pickup only.";
 export const DEFAULT_PREORDER_MESSAGE = "Preorder now available.";
 export const DEFAULT_PREORDER_BADGE = "Preorder";
 
@@ -30,7 +29,6 @@ export interface PreorderRule {
   message: string;
   badgeText: string;
   showCountdown: boolean;
-  appliedTo: RuleTarget[];
 }
 
 export interface ProductRulesV1 {
@@ -73,6 +71,7 @@ export function mergeRuleTargets(
   return Array.from(map.values());
 }
 
+export { DEFAULT_PICKUP_ONLY_MESSAGE } from "./rule-engine";
 export type { ProductRule, RuleAction, RuleCondition, RuleSet };
 
 export function createDefaultPreorderRule(): PreorderRule {
@@ -82,7 +81,6 @@ export function createDefaultPreorderRule(): PreorderRule {
     message: DEFAULT_PREORDER_MESSAGE,
     badgeText: DEFAULT_PREORDER_BADGE,
     showCountdown: false,
-    appliedTo: [],
   };
 }
 
@@ -103,20 +101,6 @@ export function createDefaultProductRules(): ProductRulesV1 {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeTargets(value: unknown): RuleTarget[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.flatMap((target) => {
-    if (!isRecord(target) || typeof target.id !== "string") return [];
-    const title = typeof target.title === "string" ? target.title : "Untitled item";
-    const type = target.type === "collection" || target.type === "group"
-      ? target.type
-      : "product";
-
-    return [{ id: target.id, title, type }];
-  });
 }
 
 export function parseProductRules(value: unknown): ProductRulesV1 | null {
@@ -153,7 +137,6 @@ export function parseProductRules(value: unknown): ProductRulesV1 | null {
             message: typeof preorder.message === "string" ? preorder.message : DEFAULT_PREORDER_MESSAGE,
             badgeText: typeof preorder.badgeText === "string" ? preorder.badgeText : DEFAULT_PREORDER_BADGE,
             showCountdown: preorder.showCountdown === true,
-            appliedTo: normalizeTargets(preorder.appliedTo),
           }
         : createDefaultPreorderRule(),
     };
@@ -195,7 +178,6 @@ export function parseProductRules(value: unknown): ProductRulesV1 | null {
               ? preorderRule.actions[0].config.badgeText
               : DEFAULT_PREORDER_BADGE,
           showCountdown: preorderRule.actions[0]?.config.showCountdown === true,
-          appliedTo: normalizeTargets(preorderRule.conditions[0]?.value),
         }
       : createDefaultPreorderRule(),
   };

@@ -18,11 +18,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const productId = new URL(request.url).searchParams.get("productId");
   const product = productId ? await loadProduct(admin, productId) : null;
+  const resolved = product ? resolveProductRules(product) : null;
   return {
     product,
     deliveryProfiles: await loadDeliveryProfiles(admin),
-    rules: product ? resolveProductRules(product).rules : normalizeProductRules(null),
-    usedLegacyFallback: product ? resolveProductRules(product).usedLegacyFallback : false,
+    rules: resolved?.rules ?? normalizeProductRules(null),
+    usedLegacyFallback: resolved?.usedLegacyFallback ?? false,
   };
 };
 

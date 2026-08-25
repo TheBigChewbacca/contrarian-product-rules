@@ -9,3 +9,74 @@
 html.cpr-has-pickup-only-rule {
   --cpr-pickup-rule-active: 1;
 }
+
+.cpr-pickup-only-notice {
+  box-sizing: border-box;
+  max-width: 100%;
+  width: 100%;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: CanvasText;
+  background: Canvas;
+  font: inherit;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cpr-add-confirmation {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  max-width: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: CanvasText;
+  background: Canvas;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+  font: inherit;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.cpr-confirmation-anchor {
+  position: relative;
+}
+
+.cpr-add-confirmation__message {
+  margin: 0 0 0.75rem;
+}
+
+.cpr-add-confirmation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.cpr-add-confirmation__actions button {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.cpr-add-confirmation__actions button:first-child {
+  color: Canvas;
+  background: CanvasText;
+}
+
+.cpr-add-confirmation__actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}

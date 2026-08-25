@@ -7,7 +7,15 @@ embedded = true
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,write_metaobjects,write_metaobject_definitions"
+scopes = "write_products,read_shipping,write_shipping"
+
+[product.metafields.contrarian_product_rules.rules]
+type = "json"
+name = "Product Rules"
+description = "Pickup Only product rule configuration"
+
+  [product.metafields.contrarian_product_rules.rules.access]
+  admin = "merchant_read_write"
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"

@@ -1,5 +1,44 @@
 # Shopify App Template - React Router
 
+## Contrarian Product Rules Phase 1
+
+The app stores Pickup Only settings in the product metafield
+`contrarian_product_rules.rules` with type `json`:
+
+```json
+{
+  "version": 1,
+  "pickup_only": {
+    "enabled": true,
+    "message": "This item is available for in-store pickup only."
+  }
+}
+```
+
+The storefront reads this canonical metafield first. Products without valid
+JSON continue to use `custom.in_store_pickup_only` as a read-only legacy
+fallback. Saving in the app writes only the canonical metafield.
+
+Run the app with `npm run dev`, select a product in the embedded app, change
+the Pickup Only setting or message, and save. Enable the **Contrarian Product
+Rules** app embed in Shopify admin under **Online Store > Themes > Customize >
+App embeds**. Open the product page and verify the configured notice appears;
+disable the rule and verify it disappears. Reopen the product in the app to
+verify the saved settings load, and verify a legacy-only product shows the
+legacy fallback indicator.
+
+This phase displays Pickup Only messaging only. It does not restrict checkout,
+delivery, or shipping.
+
+The app can associate all variants of a selected product with an existing
+shipping profile. Configure that profile in Shopify admin with only a local
+pickup delivery method; assigning a product to a profile does not itself
+create pickup-only rates or enforce checkout restrictions.
+
+After a customer submits Add to cart or Buy it now for an enabled Pickup Only
+product, the theme extension displays a confirmation message. This is
+presentation feedback, not checkout enforcement.
+
 This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [React Router](https://reactrouter.com/). It was forked from the [Shopify Remix app template](https://github.com/Shopify/shopify-app-template-remix) and converted to React Router.
 
 Rather than cloning this repo, follow the [Quick Start steps](https://github.com/Shopify/shopify-app-template-react-router#quick-start).

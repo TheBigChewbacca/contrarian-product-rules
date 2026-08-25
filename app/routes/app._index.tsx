@@ -1,352 +1,230 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type {
   ActionFunctionArgs,
   HeadersFunction,
   LoaderFunctionArgs,
 } from "react-router";
-import { useFetcher } from "react-router";
+import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { authenticate } from "../shopify.server";
+import {
+  assignProductToDeliveryProfile,
+  loadDeliveryProfiles,
+  loadProduct,
+  resolveProductRules,
+  saveProductRules,
+  type ProductRuleProduct,
+} from "../lib/product-rules.server";
+import {
+  DEFAULT_PICKUP_ONLY_MESSAGE,
+  normalizeProductRules,
+  type ProductRulesV1,
+} from "../lib/product-rules";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
-
-  return null;
+  const { admin } = await authenticate.admin(request);
+  const productId = new URL(request.url).searchParams.get("productId");
+  const deliveryProfiles = await loadDeliveryProfiles(admin);
+  const product = productId ? await loadProduct(admin, productId) : null;
+  return product
+    ? { product, deliveryProfiles, ...resolveProductRules(product) }
+    : {
+        product: null,
+        deliveryProfiles,
+        usedLegacyFallback: false,
+        rules: normalizeProductRules(null),
+      };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-            demoInfo: metafield(namespace: "$app", key: "demo_info") {
-              jsonValue
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-          metafields: [
-            {
-              namespace: "$app",
-              key: "demo_info",
-              value: "Created by React Router Template",
-            },
-          ],
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
+  const formData = await request.formData();
+  const productId = String(formData.get("productId") || "");
+  const enabled = formData.get("enabled") === "true";
+  const message =
+    String(formData.get("message") || "").trim() || DEFAULT_PICKUP_ONLY_MESSAGE;
+  const profileId = String(formData.get("profileId") || "");
 
-  const product = responseJson.data!.productCreate!.product!;
-  const variantId = product.variants.edges[0]!.node!.id!;
+  if (!productId) {
+    return {
+      ok: false,
+      errors: [{ message: "Select a product before saving." }],
+    };
+  }
 
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-
-  const variantResponseJson = await variantResponse.json();
-
-  const metaobjectResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpsertMetaobject($handle: MetaobjectHandleInput!, $values: JSON!) {
-      metaobjectUpsert(handle: $handle, values: $values) {
-        metaobject {
-          id
-          handle
-          values
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }`,
-    {
-      variables: {
-        handle: {
-          type: "$app:example",
-          handle: "demo-entry",
-        },
-        values: {
-          title: "Demo Entry",
-          description:
-            "This metaobject was created by the Shopify app template to demonstrate the metaobject API.",
-        },
-      },
-    },
-  );
-
-  const metaobjectResponseJson = await metaobjectResponse.json();
-
+  const rules = normalizeProductRules({
+    version: 1,
+    pickup_only: { enabled, message },
+  });
+  const errors = await saveProductRules(admin, productId, rules);
+  const product = await loadProduct(admin, productId);
+  const profileErrors = profileId && product
+    ? await assignProductToDeliveryProfile(admin, profileId, product.variantIds)
+    : [];
   return {
-    product: responseJson!.data!.productCreate!.product,
-    variant:
-      variantResponseJson!.data!.productVariantsBulkUpdate!.productVariants,
-    metaobject: metaobjectResponseJson!.data!.metaobjectUpsert!.metaobject,
+    ok: errors.length === 0 && profileErrors.length === 0,
+    errors: [...errors, ...profileErrors],
+    rules,
   };
 };
 
-export default function Index() {
-  const fetcher = useFetcher<typeof action>();
+function productFromPicker(value: unknown): { id: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const product = value as { id?: unknown };
+  return typeof product.id === "string" ? { id: product.id } : null;
+}
 
+export default function Index() {
+  const initial = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<typeof action>();
+  const navigate = useNavigate();
   const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  const [product, setProduct] = useState<ProductRuleProduct | null>(
+    initial.product,
+  );
+  const [rules, setRules] = useState<ProductRulesV1>(
+    initial.product ? initial.rules : normalizeProductRules(null),
+  );
+  const [usedLegacyFallback, setUsedLegacyFallback] = useState(
+    initial.usedLegacyFallback ?? false,
+  );
+  const [profileId, setProfileId] = useState("");
 
   useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
-    }
-  }, [fetcher.data?.product?.id, shopify]);
+    setProduct(initial.product);
+    setRules(initial.product ? initial.rules : normalizeProductRules(null));
+    setUsedLegacyFallback(initial.usedLegacyFallback ?? false);
+    setProfileId("");
+  }, [initial]);
 
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+  useEffect(() => {
+    if (fetcher.data?.ok) shopify.toast.show("Pickup Only rule saved");
+  }, [fetcher.data, shopify]);
+
+  const selectProduct = async () => {
+    const selection = await shopify.resourcePicker({
+      type: "product",
+      action: "select",
+      multiple: false,
+    });
+    const selected = productFromPicker(selection?.[0]);
+    if (selected) navigate(`/app?productId=${encodeURIComponent(selected.id)}`);
+  };
+
+  const save = () => {
+    if (!product) return;
+    fetcher.submit(
+      {
+        productId: product.id,
+        enabled: String(rules.pickup_only.enabled),
+        message: rules.pickup_only.message,
+        profileId,
+      },
+      { method: "POST" },
+    );
+  };
+
+  const isSaving = fetcher.state !== "idle";
+  const errors = fetcher.data?.errors ?? [];
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
+    <s-page heading="Product Rules">
+      <s-button
+        slot="primary-action"
+        onClick={save}
+        disabled={!product || isSaving}
+        loading={isSaving}
+      >
+        Save rule
       </s-button>
-
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references. Includes a product{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metafields"
-            target="_blank"
-          >
-            metafield
-          </s-link>{" "}
-          and{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data/metaobjects"
-            target="_blank"
-          >
-            metaobject
-          </s-link>
-          .
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
+      <s-section heading="Pickup Only">
+        <s-stack direction="block" gap="base">
+          <s-button onClick={selectProduct} disabled={isSaving}>
+            Select product
           </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre
-                  style={{
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
-
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre
-                  style={{
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
-
-              <s-heading>metaobjectUpsert mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre
-                  style={{
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  <code>
-                    {JSON.stringify(fetcher.data.metaobject, null, 2)}
-                  </code>
-                </pre>
-              </s-box>
+          {product ? (
+            <s-stack direction="inline" gap="base">
+              {product.featuredImage && (
+                <img
+                  src={product.featuredImage.url}
+                  alt={product.featuredImage.altText || ""}
+                  width="64"
+                  height="64"
+                />
+              )}
+              <s-heading>{product.title}</s-heading>
             </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
+          ) : (
+            <s-paragraph>Select a product to edit its rules.</s-paragraph>
+          )}
+          {usedLegacyFallback && (
+            <s-banner tone="info">
+              Displaying Pickup Only from the legacy metafield.
+            </s-banner>
+          )}
+          {fetcher.data?.ok && (
+            <s-banner tone="success">Rule saved successfully.</s-banner>
+          )}
+          {errors.map((error, index) => (
+            <s-banner key={`${error.message}-${index}`} tone="critical">
+              {error.message}
+            </s-banner>
+          ))}
+          <s-checkbox
+            label="Enable Pickup Only"
+            checked={rules.pickup_only.enabled}
+            onChange={(event) =>
+              setRules({
+                ...rules,
+                pickup_only: {
+                  ...rules.pickup_only,
+                  enabled: (event.target as HTMLInputElement).checked,
+                },
+              })
+            }
+            disabled={!product || isSaving}
+          />
+          <s-text-field
+            label="Storefront message"
+            value={rules.pickup_only.message}
+            onInput={(event) =>
+              setRules({
+                ...rules,
+                pickup_only: {
+                  ...rules.pickup_only,
+                  message: (event.target as HTMLInputElement).value,
+                },
+              })
+            }
+            disabled={!product || isSaving}
+          />
+          <s-select
+            label="Shipping profile"
+            value={profileId}
+            onChange={(event) =>
+              setProfileId((event.target as HTMLSelectElement).value)
+            }
+            disabled={!product || isSaving}
           >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Custom data: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/apps/build/custom-data"
-            target="_blank"
-          >
-            Metafields &amp; metaobjects
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
+            <s-option value="">No profile change</s-option>
+            {initial.deliveryProfiles.map((profile) => (
+              <s-option key={profile.id} value={profile.id}>
+                {profile.name}{profile.default ? " (default)" : ""}
+              </s-option>
+            ))}
+          </s-select>
+          <s-paragraph>
+            Shipping profiles are optional. Choose a profile configured with
+            local pickup only; saving associates all variants of this product
+            with that profile. If no profiles appear, reauthorize the app with
+            shipping permissions.
+          </s-paragraph>
+        </s-stack>
       </s-section>
     </s-page>
   );
 }
 
-export const headers: HeadersFunction = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
+export const headers: HeadersFunction = (headersArgs) =>
+  boundary.headers(headersArgs);

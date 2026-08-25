@@ -2,7 +2,7 @@
 
 client_id = "d9e8820d821bd7b3d046eaca8681fec3"
 name = "contrarian-product-rules"
-application_url = "https://example.com"
+application_url = "https://contrarian-product-rules.onrender.com"
 embedded = true
 
 [access_scopes]
@@ -53,7 +53,11 @@ api_version = "2026-10"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://contrarian-product-rules.onrender.com/auth/callback",
+  "https://contrarian-product-rules.onrender.com/auth/shopify/callback",
+  "https://contrarian-product-rules.onrender.com/api/auth/callback"
+]
 
 [build]
 include_config_on_deploy = true

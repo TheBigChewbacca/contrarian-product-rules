@@ -10,6 +10,28 @@ const NAMESPACE = "contrarian_product_rules";
 const KEY = "rules";
 
 export type GraphQLUserError = { field?: string[]; message: string };
+type GraphQLError = { message: string };
+
+function graphQLErrors(result: { errors?: GraphQLError[] }): GraphQLUserError[] {
+  return (result.errors ?? []).map((error) => ({ message: error.message }));
+}
+
+function shippingProfileError(error: unknown): GraphQLUserError {
+  const message = error instanceof Error ? error.message : "Unknown Shopify API error";
+  const normalizedMessage = message.toLowerCase();
+  if (
+    normalizedMessage.includes("shipping profile access is not authorized") ||
+    normalizedMessage.includes("access denied")
+  ) {
+    console.error("Shopify denied delivery profile access", { error: message });
+    return {
+      message:
+        "Shopify denied access to this merchant shipping profile. The app's read_shipping/write_shipping scopes are present, but Shopify may require shipping access approval for the app or the store may use market-driven shipping. Request the capability in the Partner Dashboard, then reinstall, or migrate this workflow to an app-owned delivery profile.",
+    };
+  }
+  console.error("Unable to update the Shopify delivery profile", { error: message });
+  return { message: `Unable to update the shipping profile: ${message}` };
+}
 
 export type ProductRuleProduct = {
   id: string;
@@ -187,7 +209,10 @@ export async function loadDeliveryProfiles(
       data?: { deliveryProfiles?: { nodes: DeliveryProfile[] } };
     };
     return result.data?.deliveryProfiles?.nodes ?? [];
-  } catch {
+  } catch (error) {
+    console.error("Unable to load Shopify delivery profiles", {
+      error: error instanceof Error ? error.message : error,
+    });
     return [];
   }
 }
@@ -269,11 +294,11 @@ export async function assignProductToDeliveryProfile(
       errors?: Array<{ message: string }>;
     };
     return [
-      ...(result.errors ?? []).map((error) => ({ message: error.message })),
+      ...graphQLErrors(result),
       ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
     ];
-  } catch {
-    return [{ message: "Shipping profile access is not authorized. Reinstall or reauthorize the app with shipping permissions." }];
+  } catch (error) {
+    return [shippingProfileError(error)];
   }
 }
 
@@ -303,10 +328,10 @@ export async function removeProductFromDeliveryProfile(
       errors?: Array<{ message: string }>;
     };
     return [
-      ...(result.errors ?? []).map((error) => ({ message: error.message })),
+      ...graphQLErrors(result),
       ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
     ];
-  } catch {
-    return [{ message: "Shipping profile access is not authorized. Reinstall or reauthorize the app with shipping permissions." }];
+  } catch (error) {
+    return [shippingProfileError(error)];
   }
 }

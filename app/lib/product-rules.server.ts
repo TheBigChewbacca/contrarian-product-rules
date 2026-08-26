@@ -11,9 +11,35 @@ const KEY = "rules";
 
 export type GraphQLUserError = { field?: string[]; message: string };
 type GraphQLError = { message: string };
+const SHIPPING_RETRY_DELAYS_MS = [250, 750];
 
 function graphQLErrors(result: { errors?: GraphQLError[] }): GraphQLUserError[] {
   return (result.errors ?? []).map((error) => ({ message: error.message }));
+}
+
+function isThrottled(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "";
+  return message.toLowerCase().includes("throttled");
+}
+
+async function withShippingRetry(
+  operation: () => Promise<GraphQLUserError[]>,
+): Promise<GraphQLUserError[]> {
+  for (let attempt = 0; attempt <= SHIPPING_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const errors = await operation();
+      if (!errors.some((error) => isThrottled(error.message))) return errors;
+      if (attempt === SHIPPING_RETRY_DELAYS_MS.length) return errors;
+    } catch (error) {
+      if (!isThrottled(error) || attempt === SHIPPING_RETRY_DELAYS_MS.length) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, SHIPPING_RETRY_DELAYS_MS[attempt]));
+  }
+  return [{ message: "Shopify throttled the shipping profile update." }];
 }
 
 function shippingProfileError(error: unknown): GraphQLUserError {
@@ -276,27 +302,29 @@ export async function assignProductToDeliveryProfile(
   }
 
   try {
-    const response = await admin.graphql(
-      `#graphql
-        mutation AssignProductToDeliveryProfile($profileId: ID!, $variantIds: [ID!]!) {
-          deliveryProfileUpdate(
-            id: $profileId
-            profile: { variantsToAssociate: $variantIds }
-          ) {
-            profile { id name }
-            userErrors { field message }
-          }
-        }`,
-      { variables: { profileId, variantIds } },
-    );
-    const result = (await response.json()) as {
-      data?: { deliveryProfileUpdate?: { userErrors: GraphQLUserError[] } };
-      errors?: Array<{ message: string }>;
-    };
-    return [
-      ...graphQLErrors(result),
-      ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
-    ];
+    return await withShippingRetry(async () => {
+      const response = await admin.graphql(
+        `#graphql
+          mutation AssignProductToDeliveryProfile($profileId: ID!, $variantIds: [ID!]!) {
+            deliveryProfileUpdate(
+              id: $profileId
+              profile: { variantsToAssociate: $variantIds }
+            ) {
+              profile { id name }
+              userErrors { field message }
+            }
+          }`,
+        { variables: { profileId, variantIds } },
+      );
+      const result = (await response.json()) as {
+        data?: { deliveryProfileUpdate?: { userErrors: GraphQLUserError[] } };
+        errors?: Array<{ message: string }>;
+      };
+      return [
+        ...graphQLErrors(result),
+        ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
+      ];
+    });
   } catch (error) {
     return [shippingProfileError(error)];
   }
@@ -310,27 +338,29 @@ export async function removeProductFromDeliveryProfile(
   if (!profileId || variantIds.length === 0) return [];
 
   try {
-    const response = await admin.graphql(
-      `#graphql
-        mutation RemoveProductFromDeliveryProfile($profileId: ID!, $variantIds: [ID!]!) {
-          deliveryProfileUpdate(
-            id: $profileId
-            profile: { variantsToDissociate: $variantIds }
-          ) {
-            profile { id name }
-            userErrors { field message }
-          }
-        }`,
-      { variables: { profileId, variantIds } },
-    );
-    const result = (await response.json()) as {
-      data?: { deliveryProfileUpdate?: { userErrors: GraphQLUserError[] } };
-      errors?: Array<{ message: string }>;
-    };
-    return [
-      ...graphQLErrors(result),
-      ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
-    ];
+    return await withShippingRetry(async () => {
+      const response = await admin.graphql(
+        `#graphql
+          mutation RemoveProductFromDeliveryProfile($profileId: ID!, $variantIds: [ID!]!) {
+            deliveryProfileUpdate(
+              id: $profileId
+              profile: { variantsToDissociate: $variantIds }
+            ) {
+              profile { id name }
+              userErrors { field message }
+            }
+          }`,
+        { variables: { profileId, variantIds } },
+      );
+      const result = (await response.json()) as {
+        data?: { deliveryProfileUpdate?: { userErrors: GraphQLUserError[] } };
+        errors?: Array<{ message: string }>;
+      };
+      return [
+        ...graphQLErrors(result),
+        ...(result.data?.deliveryProfileUpdate?.userErrors ?? []),
+      ];
+    });
   } catch (error) {
     return [shippingProfileError(error)];
   }

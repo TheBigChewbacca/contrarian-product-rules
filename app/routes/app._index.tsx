@@ -52,13 +52,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
         return rules.pickup_only.enabled;
       });
-      const errors = (await Promise.all(enabledProducts.map(async (product) => {
+      const errors: Array<{ message: string }> = [];
+      for (const product of enabledProducts) {
         const removed = await removeProductFromDeliveryProfile(admin, previousProfileId, product.variantIds);
         const added = profileId
           ? await assignProductToDeliveryProfile(admin, profileId, product.variantIds)
           : [];
-        return [...removed, ...added];
-      }))).flat();
+        errors.push(...removed, ...added);
+        if (errors.length > 0) break;
+      }
       if (errors.length > 0) return { ok: false, message: errors.map((error) => error.message).join(" ") };
     }
     await savePickupShippingProfile(session.shop, profileId);

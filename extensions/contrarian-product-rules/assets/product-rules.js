@@ -106,6 +106,7 @@
   }
 
   function renderPreorder(appElement, preorder, timeZone) {
+    console.log("[CPR] Rendering preorder", preorder);
     if (!preorder || preorder.enabled !== true) return;
 
     const container = document.createElement("div");
@@ -154,6 +155,7 @@
     }
 
     const target = findNoticeTarget();
+    console.log("[CPR] Target", target);
     if (target) {
       target.insertAdjacentElement("afterbegin", container);
       const sizePreorder = function () {
@@ -179,15 +181,67 @@
       const observer = new MutationObserver(sizePreorder);
       observer.observe(target, { childList: true, subtree: true });
     } else {
-      appElement.insertAdjacentElement("afterend", container);
-    }
+  const fallback =
+    document.querySelector("main") ||
+    document.querySelector("[role='main']") ||
+    document.body;
+
+  fallback.prepend(container);
+
+  console.warn(
+    "[CPR] Preorder rendered using page fallback"
+  );
+}
   }
 
   function findNoticeTarget() {
-    return document.querySelector(
-      'product-form, form[action*="/cart/add"], [data-type="add-to-cart-form"], .product-form',
+  const selectors = [
+    // Existing selectors
+    'product-form',
+    'form[action*="/cart/add"]',
+    '[data-type="add-to-cart-form"]',
+    '.product-form',
+
+    // Dawn
+    '.product__info-container',
+    '.product__info-wrapper',
+    '.product__info',
+
+    // Other common Shopify themes
+    '.product-info',
+    '.product-single__meta',
+    '.product-single__information',
+    '[data-product-info]',
+    '[data-product-root]',
+  ];
+
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+
+    if (element) {
+      console.log("[CPR] Found target:", selector);
+      return element;
+    }
+  }
+
+  const addToCartButton = document.querySelector(
+    'button[name="add"], .product-form__submit, button[type="submit"]'
+  );
+
+  if (addToCartButton) {
+    console.log("[CPR] Using add-to-cart fallback");
+
+    return (
+      addToCartButton.closest("form") ||
+      addToCartButton.parentElement ||
+      addToCartButton
     );
   }
+
+  console.warn("[CPR] No notice target found");
+
+  return null;
+}
 
   function findActionButton(target) {
     const primarySelector = 'button.product-form__submit, button[name="add"], input[name="add"], input[type="submit"]';
@@ -419,9 +473,8 @@
     let context;
     try {
       context = readStorefrontContext(appElement);
-      console.log("CPR Context", context);
-console.log("CPR Rules", context.rules);
-console.log("CPR Preorder", context?.rules?.preorder);
+      console.log("[CPR] Context", context);
+      console.log("[CPR] Rules", context.rules);
     } catch (error) {
       console.warn("[Contrarian Product Rules] Invalid rule data.", error);
       return;

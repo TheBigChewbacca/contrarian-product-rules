@@ -5,48 +5,64 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
-  assignProductToDeliveryProfile,
   loadDeliveryProfiles,
+  loadPickupShippingProfile,
   loadProduct,
+  resolveDefaultDeliveryProfileId,
   resolveProductRules,
   saveProductRules,
+  syncProductPickupProfile,
+  type GraphQLUserError,
   type ProductRuleProduct,
 } from "../lib/product-rules.server";
 import { DEFAULT_PICKUP_ONLY_MESSAGE, normalizeProductRules } from "../lib/product-rules";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const productId = new URL(request.url).searchParams.get("productId");
   const product = productId ? await loadProduct(admin, productId) : null;
   const resolved = product ? resolveProductRules(product) : null;
+  const [deliveryProfiles, pickupShippingProfileId] = await Promise.all([
+    loadDeliveryProfiles(admin),
+    loadPickupShippingProfile(session.shop),
+  ]);
   return {
     product,
-    deliveryProfiles: await loadDeliveryProfiles(admin),
+    deliveryProfiles,
+    pickupShippingProfileId,
     rules: resolved?.rules ?? normalizeProductRules(null),
     usedLegacyFallback: resolved?.usedLegacyFallback ?? false,
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const productId = String(formData.get("productId") || "");
   if (!productId) return { ok: false, errors: [{ message: "Select a product before saving." }] };
 
   const product = await loadProduct(admin, productId);
   const existingRules = product ? resolveProductRules(product).rules : normalizeProductRules(null);
+  const enabled = formData.get("enabled") === "true";
   const rules = {
     ...existingRules,
     pickup_only: {
-      enabled: formData.get("enabled") === "true",
+      enabled,
       message: String(formData.get("message") || "").trim() || DEFAULT_PICKUP_ONLY_MESSAGE,
     },
   };
   const errors = await saveProductRules(admin, productId, rules);
-  const profileId = String(formData.get("profileId") || "");
-  const profileErrors = profileId && product
-    ? await assignProductToDeliveryProfile(admin, profileId, product.variantIds)
-    : [];
+
+  let profileErrors: GraphQLUserError[] = [];
+  if (product) {
+    const [pickupProfileId, deliveryProfiles] = await Promise.all([
+      loadPickupShippingProfile(session.shop),
+      loadDeliveryProfiles(admin),
+    ]);
+    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
+    profileErrors = await syncProductPickupProfile(admin, product.variantIds, enabled, pickupProfileId, defaultProfileId);
+  }
+
   return { ok: errors.length === 0 && profileErrors.length === 0, errors: [...errors, ...profileErrors] };
 };
 
@@ -64,13 +80,11 @@ export default function PickupOnlyPage() {
   const [product, setProduct] = useState<ProductRuleProduct | null>(initial.product);
   const [enabled, setEnabled] = useState(initial.rules.pickup_only.enabled);
   const [message, setMessage] = useState(initial.rules.pickup_only.message);
-  const [profileId, setProfileId] = useState("");
 
   useEffect(() => {
     setProduct(initial.product);
     setEnabled(initial.rules.pickup_only.enabled);
     setMessage(initial.rules.pickup_only.message);
-    setProfileId("");
   }, [initial]);
 
   useEffect(() => {
@@ -85,11 +99,12 @@ export default function PickupOnlyPage() {
 
   const isSaving = fetcher.state !== "idle";
   const errors = fetcher.data?.errors ?? [];
+  const pickupProfileName = initial.deliveryProfiles.find((profile) => profile.id === initial.pickupShippingProfileId)?.name;
 
   return (
     <s-page heading="Pickup Only">
       <s-button slot="primary-action" variant="primary" onClick={() => fetcher.submit(
-        { productId: product?.id ?? "", enabled: String(enabled), message, profileId },
+        { productId: product?.id ?? "", enabled: String(enabled), message },
         { method: "post" },
       )} disabled={!product || isSaving} loading={isSaving}>Save rule</s-button>
       <s-section heading="Product">
@@ -105,10 +120,12 @@ export default function PickupOnlyPage() {
         <s-stack direction="block" gap="base">
           <s-checkbox label="Enable Pickup Only" checked={enabled} onChange={(event) => setEnabled((event.target as HTMLInputElement).checked)} disabled={!product || isSaving} />
           <s-text-field label="Storefront message" value={message} onInput={(event) => setMessage((event.target as HTMLInputElement).value)} disabled={!product || isSaving} />
-          <s-select label="Shipping profile" value={profileId} onChange={(event) => setProfileId((event.target as HTMLSelectElement).value)} disabled={!product || isSaving}>
-            <s-option value="">No profile change</s-option>
-            {initial.deliveryProfiles.map((profile) => <s-option key={profile.id} value={profile.id}>{profile.name}{profile.default ? " (default)" : ""}</s-option>)}
-          </s-select>
+          <s-paragraph>
+            {pickupProfileName
+              ? `Enabling this rule assigns the product to "${pickupProfileName}". Disabling it returns the product to your default shipping profile.`
+              : "No pickup shipping profile is configured yet. Set one from the Product rules page before enabling this rule."}
+          </s-paragraph>
+          <s-link href="/app">Manage pickup shipping profile</s-link>
         </s-stack>
       </s-section>
     </s-page>

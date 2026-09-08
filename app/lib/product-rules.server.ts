@@ -70,7 +70,7 @@ export type ProductRuleProduct = {
 
 export type DeliveryProfile = { id: string; name: string; default: boolean };
 
-export type ProductRuleSummary = Pick<
+export type ProductRuleSummary = Pick
   ProductRuleProduct,
   "id" | "title" | "featuredImage" | "rulesValue" | "legacyPickupOnly"
 > & { variantIds: string[] };
@@ -364,4 +364,164 @@ export async function removeProductFromDeliveryProfile(
   } catch (error) {
     return [shippingProfileError(error)];
   }
+}
+
+export function resolveDefaultDeliveryProfileId(profiles: DeliveryProfile[]): string {
+  return profiles.find((profile) => profile.default)?.id ?? "";
+}
+
+// Moves a product's variants between the pickup profile and the default
+// profile based on whether the Pickup Only rule is enabled.
+export async function syncProductPickupProfile(
+  admin: AdminApiContext,
+  variantIds: string[],
+  enabled: boolean,
+  pickupProfileId: string,
+  defaultProfileId: string,
+): Promise<GraphQLUserError[]> {
+  const errors: GraphQLUserError[] = [];
+
+  if (enabled) {
+    if (pickupProfileId) {
+      errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, variantIds)));
+    }
+    if (defaultProfileId && defaultProfileId !== pickupProfileId) {
+      errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, variantIds)));
+    }
+  } else {
+    if (pickupProfileId) {
+      errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, variantIds)));
+    }
+    if (defaultProfileId) {
+      errors.push(...(await assignProductToDeliveryProfile(admin, defaultProfileId, variantIds)));
+    }
+  }
+
+  return errors.filter((error) => error.message);
+}
+
+export type DeliveryProfileAssignment = { productId: string; title: string };
+
+export async function loadDeliveryProfileProductAssignments(
+  admin: AdminApiContext,
+  profileId: string,
+): Promise<DeliveryProfileAssignment[]> {
+  if (!profileId) return [];
+  const assignments: DeliveryProfileAssignment[] = [];
+  let after: string | undefined;
+  let hasNextPage = true;
+
+  // NOTE: verify `profileItems` is the correct connection name/shape for
+  // DeliveryProfile in the API version this app targets (see
+  // shopify.app.toml) before relying on this in production. Nothing else in
+  // this file reads assignments back out of a profile — everything else only
+  // writes to one via variantsToAssociate/variantsToDissociate.
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+        query DeliveryProfileAssignments($id: ID!, $after: String) {
+          deliveryProfile(id: $id) {
+            profileItems(first: 100, after: $after) {
+              nodes { product { id title } }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }`,
+      { variables: { id: profileId, after: after || undefined } },
+    );
+    const result = (await response.json()) as {
+      data?: {
+        deliveryProfile?: {
+          profileItems?: {
+            nodes: Array<{ product: { id: string; title: string } | null }>;
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          };
+        };
+      };
+    };
+    const items = result.data?.deliveryProfile?.profileItems;
+    for (const node of items?.nodes ?? []) {
+      if (node.product) assignments.push({ productId: node.product.id, title: node.product.title });
+    }
+    hasNextPage = items?.pageInfo.hasNextPage ?? false;
+    after = items?.pageInfo.endCursor ?? undefined;
+  }
+
+  return assignments;
+}
+
+export type PickupProfileMismatch =
+  | { type: "missing_from_pickup"; productId: string; title: string; variantIds: string[] }
+  | { type: "unexpected_in_pickup"; productId: string; title: string; variantIds: string[] };
+
+// Compares which products SHOULD be in the pickup profile (based on the rule
+// metafield) against which products actually ARE in it.
+export async function auditPickupDeliveryProfile(
+  admin: AdminApiContext,
+  pickupProfileId: string,
+): Promise<PickupProfileMismatch[]> {
+  if (!pickupProfileId) return [];
+
+  const [products, assignments] = await Promise.all([
+    loadAllProductRuleSummaries(admin),
+    loadDeliveryProfileProductAssignments(admin, pickupProfileId),
+  ]);
+
+  const assignedIds = new Set(assignments.map((assignment) => assignment.productId));
+  const mismatches: PickupProfileMismatch[] = [];
+
+  for (const product of products) {
+    const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
+    const shouldBeAssigned = rules.pickup_only.enabled;
+    const isAssigned = assignedIds.has(product.id);
+
+    if (shouldBeAssigned && !isAssigned) {
+      mismatches.push({
+        type: "missing_from_pickup",
+        productId: product.id,
+        title: product.title,
+        variantIds: product.variantIds,
+      });
+    } else if (!shouldBeAssigned && isAssigned) {
+      mismatches.push({
+        type: "unexpected_in_pickup",
+        productId: product.id,
+        title: product.title,
+        variantIds: product.variantIds,
+      });
+    }
+  }
+
+  return mismatches;
+}
+
+// Uses the variantIds already captured on each mismatch (from the catalog
+// scan in auditPickupDeliveryProfile) instead of re-fetching each product
+// individually, which would otherwise be one extra GraphQL round-trip per
+// mismatched product.
+export async function fixPickupDeliveryProfileMismatches(
+  admin: AdminApiContext,
+  mismatches: PickupProfileMismatch[],
+  pickupProfileId: string,
+  defaultProfileId: string,
+): Promise<GraphQLUserError[]> {
+  const errors: GraphQLUserError[] = [];
+
+  for (const mismatch of mismatches) {
+    if (mismatch.variantIds.length === 0) continue;
+
+    if (mismatch.type === "missing_from_pickup") {
+      errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
+      if (defaultProfileId && defaultProfileId !== pickupProfileId) {
+        errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, mismatch.variantIds)));
+      }
+    } else {
+      errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
+      if (defaultProfileId) {
+        errors.push(...(await assignProductToDeliveryProfile(admin, defaultProfileId, mismatch.variantIds)));
+      }
+    }
+  }
+
+  return errors.filter((error) => error.message);
 }

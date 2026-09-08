@@ -260,11 +260,24 @@ export async function saveProductRules(
   productId: string,
   rules: ProductRulesV1,
 ): Promise<GraphQLUserError[]> {
+  const serializedRules = JSON.stringify(rules);
+
   const response = await admin.graphql(
     `#graphql
       mutation ProductRulesSave($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
-          userErrors { field message }
+          metafields {
+            id
+            namespace
+            key
+            type
+            value
+          }
+          userErrors {
+            field
+            message
+            code
+          }
         }
       }`,
     {
@@ -275,20 +288,62 @@ export async function saveProductRules(
             namespace: NAMESPACE,
             key: KEY,
             type: "json",
-            value: JSON.stringify(rules),
+            value: serializedRules,
           },
         ],
       },
     },
   );
+
   const result = (await response.json()) as {
-    data?: { metafieldsSet?: { userErrors: GraphQLUserError[] } };
+    data?: {
+      metafieldsSet?: {
+        metafields: Array<{
+          id: string;
+          namespace: string;
+          key: string;
+          type: string;
+          value: string;
+        }> | null;
+        userErrors: Array<{
+          field?: string[];
+          message: string;
+          code?: string;
+        }>;
+      };
+    };
     errors?: Array<{ message: string }>;
   };
-  return [
-    ...(result.errors ?? []).map((error) => ({ message: error.message })),
+
+  const errors: GraphQLUserError[] = [
+    ...(result.errors ?? []).map((error) => ({
+      message: error.message,
+    })),
     ...(result.data?.metafieldsSet?.userErrors ?? []),
   ];
+
+  console.log("Product rules metafield save result", {
+    productId,
+    expectedNamespace: NAMESPACE,
+    expectedKey: KEY,
+    submittedRules: rules,
+    savedMetafields: result.data?.metafieldsSet?.metafields ?? [],
+    errors,
+  });
+
+  if (
+    errors.length === 0 &&
+    !result.data?.metafieldsSet?.metafields?.length
+  ) {
+    return [
+      {
+        message:
+          "Shopify returned no errors, but did not return a saved metafield.",
+      },
+    ];
+  }
+
+  return errors;
 }
 
 export async function assignProductToDeliveryProfile(

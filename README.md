@@ -76,6 +76,18 @@ shopify app init --template=https://github.com/Shopify/shopify-app-template-reac
 shopify app dev
 ```
 
+Before starting local development, copy `.env.example` to `.env` and set the
+PostgreSQL connection values. `DATABASE_URL` is the runtime connection string;
+`DIRECT_URL` is the direct, non-pooled connection string used by Prisma
+migrations. If your PostgreSQL provider gives you one direct connection
+string, it can be used for both variables.
+
+```shell
+Copy-Item .env.example .env
+npm run setup
+npm run dev
+```
+
 Press P to open the URL to your app. Once you click install, you can start development.
 
 Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.

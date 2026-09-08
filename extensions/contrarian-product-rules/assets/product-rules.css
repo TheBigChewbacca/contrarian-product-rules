@@ -64,6 +64,16 @@ html.cpr-has-preorder-rule .pickup-availability {
   margin: 0;
 }
 
+html.cpr-has-preorder-rule.cpr-has-pickup-only-rule .cpr-preorder__message::after {
+  display: block;
+  margin-top: 0.5rem;
+  content: "Pickup only: This item is available for in-store pickup only.";
+}
+
+html.cpr-has-preorder-rule.cpr-has-pickup-only-rule .cpr-pickup-only-notice {
+  display: none;
+}
+
 .cpr-preorder__countdown {
   margin-top: 0.5rem;
 }

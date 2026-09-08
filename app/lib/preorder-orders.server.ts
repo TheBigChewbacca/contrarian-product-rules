@@ -51,7 +51,14 @@ export async function processPreorderOrder(
       }`,
     { variables: { id: orderId } },
   );
-  const result = (await response.json()) as { data?: { order: PreorderOrder | null } };
+  const result = (await response.json()) as {
+    data?: { order: PreorderOrder | null };
+    errors?: Array<{ message: string }>;
+  };
+  const queryErrors = result.errors ?? [];
+  if (queryErrors.length > 0) {
+    return { processed: false, errors: queryErrors.map((error) => error.message) };
+  }
   const order = result.data?.order;
   if (!order) return { processed: false, errors: ["Order not found."] };
 
@@ -88,10 +95,13 @@ export async function processPreorderOrder(
   };
   errors.push(...(updateResult.errors ?? []).map((error) => error.message));
   errors.push(...(updateResult.data?.orderUpdate?.userErrors ?? []).map((error) => error.message));
+  if (!updateResult.data?.orderUpdate) {
+    errors.push("Shopify did not return an order update result.");
+  }
 
-  await Promise.all(order.fulfillmentOrders.nodes
+  const holdErrors = await Promise.all(order.fulfillmentOrders.nodes
     .filter((fulfillmentOrder) => !["CLOSED", "CANCELLED", "FULFILLED"].includes(fulfillmentOrder.status))
-    .map(async (fulfillmentOrder) => {
+    .map(async (fulfillmentOrder): Promise<string[]> => {
       const holdResponse = await admin.graphql(
         `#graphql
           mutation HoldPreorderFulfillment($id: ID!, $fulfillmentHold: FulfillmentOrderHoldInput!) {
@@ -112,12 +122,29 @@ export async function processPreorderOrder(
         },
       );
       const holdResult = (await holdResponse.json()) as {
-        data?: { fulfillmentOrderHold?: { userErrors: Array<{ message: string }> } };
+        data?: {
+          fulfillmentOrderHold?: {
+            fulfillmentOrder: { id: string; status: string } | null;
+            userErrors: Array<{ message: string }>;
+          };
+        };
         errors?: Array<{ message: string }>;
       };
-      errors.push(...(holdResult.errors ?? []).map((error) => error.message));
-      errors.push(...(holdResult.data?.fulfillmentOrderHold?.userErrors ?? []).map((error) => error.message));
+      const holdMutation = holdResult.data?.fulfillmentOrderHold;
+      const mutationErrors = [
+        ...(holdResult.errors ?? []).map((error) => error.message),
+        ...(holdMutation?.userErrors ?? []).map((error) => error.message),
+      ];
+      if (!holdMutation) {
+        mutationErrors.push("Shopify did not return a fulfillment hold result.");
+      } else if (holdMutation.fulfillmentOrder?.status !== "ON_HOLD") {
+        mutationErrors.push(
+          `Fulfillment order ${fulfillmentOrder.id} returned status ${holdMutation.fulfillmentOrder?.status ?? "unknown"} instead of ON_HOLD.`,
+        );
+      }
+      return mutationErrors;
     }));
+  errors.push(...holdErrors.flat());
 
   return { processed: true, errors };
 }

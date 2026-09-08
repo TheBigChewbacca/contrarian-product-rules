@@ -19,6 +19,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       orderId,
       errors: result.errors,
     });
+    return new Response(null, { status: 500 });
   }
 
   return new Response();

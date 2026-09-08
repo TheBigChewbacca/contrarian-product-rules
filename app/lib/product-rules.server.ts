@@ -70,7 +70,7 @@ export type ProductRuleProduct = {
 
 export type DeliveryProfile = { id: string; name: string; default: boolean };
 
-export type ProductRuleSummary = Pick<
+export type ProductRuleSummary = Pick
   ProductRuleProduct,
   "id" | "title" | "featuredImage" | "rulesValue" | "legacyPickupOnly"
 > & { variantIds: string[] };
@@ -411,6 +411,11 @@ export async function loadDeliveryProfileProductAssignments(
   let after: string | undefined;
   let hasNextPage = true;
 
+  // NOTE: verify `profileItems` is the correct connection name/shape for
+  // DeliveryProfile in the API version this app targets (see
+  // shopify.app.toml) before relying on this in production. Nothing else in
+  // this file reads assignments back out of a profile — everything else only
+  // writes to one via variantsToAssociate/variantsToDissociate.
   while (hasNextPage) {
     const response = await admin.graphql(
       `#graphql
@@ -446,8 +451,8 @@ export async function loadDeliveryProfileProductAssignments(
 }
 
 export type PickupProfileMismatch =
-  | { type: "missing_from_pickup"; productId: string; title: string }
-  | { type: "unexpected_in_pickup"; productId: string; title: string };
+  | { type: "missing_from_pickup"; productId: string; title: string; variantIds: string[] }
+  | { type: "unexpected_in_pickup"; productId: string; title: string; variantIds: string[] };
 
 // Compares which products SHOULD be in the pickup profile (based on the rule
 // metafield) against which products actually ARE in it.
@@ -471,15 +476,29 @@ export async function auditPickupDeliveryProfile(
     const isAssigned = assignedIds.has(product.id);
 
     if (shouldBeAssigned && !isAssigned) {
-      mismatches.push({ type: "missing_from_pickup", productId: product.id, title: product.title });
+      mismatches.push({
+        type: "missing_from_pickup",
+        productId: product.id,
+        title: product.title,
+        variantIds: product.variantIds,
+      });
     } else if (!shouldBeAssigned && isAssigned) {
-      mismatches.push({ type: "unexpected_in_pickup", productId: product.id, title: product.title });
+      mismatches.push({
+        type: "unexpected_in_pickup",
+        productId: product.id,
+        title: product.title,
+        variantIds: product.variantIds,
+      });
     }
   }
 
   return mismatches;
 }
 
+// Uses the variantIds already captured on each mismatch (from the catalog
+// scan in auditPickupDeliveryProfile) instead of re-fetching each product
+// individually, which would otherwise be one extra GraphQL round-trip per
+// mismatched product.
 export async function fixPickupDeliveryProfileMismatches(
   admin: AdminApiContext,
   mismatches: PickupProfileMismatch[],
@@ -489,18 +508,17 @@ export async function fixPickupDeliveryProfileMismatches(
   const errors: GraphQLUserError[] = [];
 
   for (const mismatch of mismatches) {
-    const product = await loadProduct(admin, mismatch.productId);
-    if (!product) continue;
+    if (mismatch.variantIds.length === 0) continue;
 
     if (mismatch.type === "missing_from_pickup") {
-      errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, product.variantIds)));
+      errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
       if (defaultProfileId && defaultProfileId !== pickupProfileId) {
-        errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, product.variantIds)));
+        errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, mismatch.variantIds)));
       }
     } else {
-      errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, product.variantIds)));
+      errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
       if (defaultProfileId) {
-        errors.push(...(await assignProductToDeliveryProfile(admin, defaultProfileId, product.variantIds)));
+        errors.push(...(await assignProductToDeliveryProfile(admin, defaultProfileId, mismatch.variantIds)));
       }
     }
   }

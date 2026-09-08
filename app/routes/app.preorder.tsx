@@ -40,13 +40,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     : [];
   if (selectedIds.length === 0) return { ok: false, errors: [{ message: "Select at least one product before saving." }] };
 
-  const preorder: PreorderRule = {
-    enabled: formData.get("enabled") === "true",
-    releaseDate: String(formData.get("releaseDate") || ""),
-    message: String(formData.get("message") || "").trim() || DEFAULT_PREORDER_MESSAGE,
-    badgeText: String(formData.get("badgeText") || "").trim() || DEFAULT_PREORDER_BADGE,
-    showCountdown: formData.get("showCountdown") === "true",
-  };
+ const preorder: PreorderRule = {
+  enabled: formData.get("enabled") === "true",
+  releaseDate: String(formData.get("releaseDate") || ""),
+  message:
+    String(formData.get("message") || "").trim() ||
+    DEFAULT_PREORDER_MESSAGE,
+  badgeText:
+    String(formData.get("badgeText") || "").trim() ||
+    DEFAULT_PREORDER_BADGE,
+  showCountdown: formData.get("showCountdown") === "true",
+  appliedTo: selectedIds.map((id) => ({
+    id,
+    title: id,
+    type: "product",
+  })),
+};
   const results = await Promise.all(selectedIds.map(async (productId) => {
     const product = await loadProduct(admin, productId);
     const existing = product ? resolveProductRules(product).rules : null;

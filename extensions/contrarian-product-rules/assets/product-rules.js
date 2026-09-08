@@ -419,6 +419,9 @@
     let context;
     try {
       context = readStorefrontContext(appElement);
+      console.log("CPR Context", context);
+console.log("CPR Rules", context.rules);
+console.log("CPR Preorder", context?.rules?.preorder);
     } catch (error) {
       console.warn("[Contrarian Product Rules] Invalid rule data.", error);
       return;

@@ -12,10 +12,11 @@ scopes = "read_products,write_products,read_orders,write_orders,read_shipping,wr
 [product.metafields.contrarian_product_rules.rules]
 type = "json"
 name = "Product Rules"
-description = "Pickup Only product rule configuration"
+description = "Pickup Only and preorder product rule configuration"
 
-  [product.metafields.contrarian_product_rules.rules.access]
-  admin = "merchant_read_write"
+[product.metafields.contrarian_product_rules.rules.access]
+admin = "merchant_read_write"
+storefront = "public_read"
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"

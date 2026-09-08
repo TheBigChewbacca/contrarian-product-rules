@@ -70,7 +70,7 @@ export type ProductRuleProduct = {
 
 export type DeliveryProfile = { id: string; name: string; default: boolean };
 
-export type ProductRuleSummary = Pick
+export type ProductRuleSummary = Pick<
   ProductRuleProduct,
   "id" | "title" | "featuredImage" | "rulesValue" | "legacyPickupOnly"
 > & { variantIds: string[] };

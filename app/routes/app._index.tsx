@@ -9,16 +9,22 @@ import {
   type ProductRulesV1,
 } from "../lib/product-rules";
 import {
+  auditPickupDeliveryProfile,
+  fixPickupDeliveryProfileMismatches,
   loadProduct,
   loadDeliveryProfiles,
   loadPickupShippingProfile,
   loadProductRuleSummaries,
   loadAllProductRuleSummaries,
-  removeProductFromDeliveryProfile,
+  resolveDefaultDeliveryProfileId,
   resolveProductRules,
   savePickupShippingProfile,
   saveProductRules,
+  syncProductPickupProfile,
+  removeProductFromDeliveryProfile,
   assignProductToDeliveryProfile,
+  type GraphQLUserError,
+  type PickupProfileMismatch,
 } from "../lib/product-rules.server";
 import "../styles/rule-dashboard.css";
 
@@ -39,12 +45,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
-  const productId = String(formData.get("productId") || "");
-  const rule = formData.get("rule") === "preorder" ? "preorder" : "pickup";
-  const profileId = String(formData.get("profileId") || "");
   const actionType = String(formData.get("action") || "toggle");
 
   if (actionType === "profile") {
+    const profileId = String(formData.get("profileId") || "");
     const previousProfileId = await loadPickupShippingProfile(session.shop);
     if (previousProfileId !== profileId) {
       const products = await loadAllProductRuleSummaries(admin);
@@ -52,7 +56,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
         return rules.pickup_only.enabled;
       });
-      const errors: Array<{ message: string }> = [];
+      const errors: GraphQLUserError[] = [];
       for (const product of enabledProducts) {
         const removed = await removeProductFromDeliveryProfile(admin, previousProfileId, product.variantIds);
         const added = profileId
@@ -67,6 +71,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return { ok: true };
   }
 
+  if (actionType === "audit") {
+    const pickupProfileId = await loadPickupShippingProfile(session.shop);
+    if (!pickupProfileId) {
+      return { ok: true, mismatches: [] as PickupProfileMismatch[], auditMessage: "No pickup shipping profile is configured yet." };
+    }
+    const mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
+    return {
+      ok: true,
+      mismatches,
+      auditMessage:
+        mismatches.length === 0
+          ? "All pickup-only products are correctly assigned."
+          : `Found ${mismatches.length} product${mismatches.length === 1 ? "" : "s"} out of sync.`,
+    };
+  }
+
+  if (actionType === "fix") {
+    const pickupProfileId = await loadPickupShippingProfile(session.shop);
+    if (!pickupProfileId) {
+      return { ok: false, message: "No pickup shipping profile is configured yet." };
+    }
+    const deliveryProfiles = await loadDeliveryProfiles(admin);
+    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
+    const mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
+    const errors = await fixPickupDeliveryProfileMismatches(admin, mismatches, pickupProfileId, defaultProfileId);
+    return errors.length > 0
+      ? { ok: false, message: errors.map((error) => error.message).join(" ") }
+      : {
+          ok: true,
+          mismatches: [] as PickupProfileMismatch[],
+          auditMessage: `Fixed ${mismatches.length} product${mismatches.length === 1 ? "" : "s"}.`,
+        };
+  }
+
+  const productId = String(formData.get("productId") || "");
+  const rule = formData.get("rule") === "preorder" ? "preorder" : "pickup";
+
   if (!productId) return { ok: false, message: "A product is required." };
 
   const product = await loadProduct(admin, productId);
@@ -77,11 +118,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     ? { ...existing, preorder: { ...(existing.preorder ?? createDefaultPreorderRule()), enabled } }
     : { ...existing, pickup_only: { ...existing.pickup_only, enabled } };
   const errors = await saveProductRules(admin, productId, rules);
-  const profileErrors = rule === "pickup"
-    ? enabled
-      ? await assignProductToDeliveryProfile(admin, profileId || await loadPickupShippingProfile(session.shop), product.variantIds)
-      : await removeProductFromDeliveryProfile(admin, profileId || await loadPickupShippingProfile(session.shop), product.variantIds)
-    : [];
+
+  let profileErrors: GraphQLUserError[] = [];
+  if (rule === "pickup") {
+    const [pickupProfileId, deliveryProfiles] = await Promise.all([
+      loadPickupShippingProfile(session.shop),
+      loadDeliveryProfiles(admin),
+    ]);
+    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
+    profileErrors = await syncProductPickupProfile(admin, product.variantIds, enabled, pickupProfileId, defaultProfileId);
+  }
+
   const allErrors = [...errors, ...profileErrors];
   return allErrors.length > 0
     ? { ok: false, message: allErrors.map((error) => error.message).join(" ") }
@@ -92,6 +139,7 @@ export default function Index() {
   const { products, pageInfo, deliveryProfiles, pickupShippingProfileId, rule, search } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
+  const auditFetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState(search);
   const activeRule = rule === "preorder" ? "preorder" : "pickup";
@@ -131,6 +179,8 @@ export default function Index() {
       : rules.pickup_only.enabled;
   };
 
+  const mismatches = auditFetcher.data?.mismatches ?? [];
+
   return (
     <s-page heading="Product rules">
       <s-section>
@@ -146,13 +196,51 @@ export default function Index() {
             <button type="submit">Search</button>
           </form>
           <div className="rule-actions">
-            {activeRule === "pickup" && <s-select label="Pickup Shipping Profile" value={pickupShippingProfileId} onChange={(event) => fetcher.submit({ action: "profile", profileId: (event.target as HTMLSelectElement).value }, { method: "post" })}>
-              <s-option value="">No profile</s-option>
-              {deliveryProfiles.map((profile) => <s-option key={profile.id} value={profile.id}>{profile.name}{profile.default ? " (default)" : ""}</s-option>)}
-            </s-select>}
+            {activeRule === "pickup" && (
+              <>
+                <s-select label="Pickup Shipping Profile" value={pickupShippingProfileId} onChange={(event) => fetcher.submit({ action: "profile", profileId: (event.target as HTMLSelectElement).value }, { method: "post" })}>
+                  <s-option value="">No profile</s-option>
+                  {deliveryProfiles.map((profile) => <s-option key={profile.id} value={profile.id}>{profile.name}{profile.default ? " (default)" : ""}</s-option>)}
+                </s-select>
+                <button
+                  type="button"
+                  className="edit-button"
+                  disabled={auditFetcher.state !== "idle"}
+                  onClick={() => auditFetcher.submit({ action: "audit" }, { method: "post" })}
+                >
+                  {auditFetcher.state !== "idle" ? "Checking…" : "Check assignments"}
+                </button>
+              </>
+            )}
             <s-link href={activeRule === "preorder" ? "/app/preorder" : "/app/pickup"}>Add product with this rule</s-link>
           </div>
         </div>
+        {activeRule === "pickup" && auditFetcher.data?.auditMessage && (
+          <s-banner tone={mismatches.length > 0 ? "warning" : "success"}>
+            <p>{auditFetcher.data.auditMessage}</p>
+            {mismatches.length > 0 && (
+              <>
+                <ul>
+                  {mismatches.map((mismatch) => (
+                    <li key={mismatch.productId}>
+                      {mismatch.title} — {mismatch.type === "missing_from_pickup"
+                        ? "should be assigned to the pickup profile"
+                        : "should be moved back to the default profile"}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="edit-button"
+                  disabled={auditFetcher.state !== "idle"}
+                  onClick={() => auditFetcher.submit({ action: "fix" }, { method: "post" })}
+                >
+                  Fix all
+                </button>
+              </>
+            )}
+          </s-banner>
+        )}
         <p className="rule-count">Showing {products.length} products</p>
         <div className="rule-table-wrap">
           <table className="rule-table">
@@ -165,7 +253,7 @@ export default function Index() {
                   <th scope="row"><span className="product-cell">{product.featuredImage && <img src={product.featuredImage.url} alt="" />}{product.title}</span></th>
                   {activeRule === "preorder" && <td>{rules.preorder?.releaseDate || "Not set"}</td>}
                   <td>{activeRule === "preorder" ? "Preorder" : "Pickup only"}</td>
-                  <td><button className={enabled ? "status on" : "status off"} aria-label={`${enabled ? "Disable" : "Enable"} ${activeRule} for ${product.title}`} disabled={fetcher.state !== "idle"} onClick={() => fetcher.submit({ productId: product.id, rule: activeRule, enabled: String(!enabled), profileId: pickupShippingProfileId }, { method: "post" })}>{enabled ? "ON" : "OFF"}</button></td>
+                  <td><button className={enabled ? "status on" : "status off"} aria-label={`${enabled ? "Disable" : "Enable"} ${activeRule} for ${product.title}`} disabled={fetcher.state !== "idle"} onClick={() => fetcher.submit({ productId: product.id, rule: activeRule, enabled: String(!enabled) }, { method: "post" })}>{enabled ? "ON" : "OFF"}</button></td>
                   <td className="actions"><button type="button" className="edit-button" onClick={() => navigate(`${activeRule === "preorder" ? "/app/preorder" : "/app/pickup"}?productId=${encodeURIComponent(product.id)}`)}>Edit</button></td>
                 </tr>;
               })}
@@ -177,7 +265,7 @@ export default function Index() {
           {pageInfo.hasNextPage && <button onClick={goToNextPage}>Next page</button>}
         </div>}
         {fetcher.data?.message && <s-banner tone="critical">{fetcher.data.message}</s-banner>}
-        {fetcher.data?.ok && <s-banner tone="success">Rule updated.</s-banner>}
+        {fetcher.data?.ok && !fetcher.data?.auditMessage && <s-banner tone="success">Rule updated.</s-banner>}
       </s-section>
     </s-page>
   );

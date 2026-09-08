@@ -9,8 +9,9 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider  = "postgresql"
+  url       = env("postgresql://neondb_owner:npg_ZHY54LBEdGtK@ep-ancient-tooth-aki8zbf5.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")   // pooled connection, used at runtime
+  directUrl = env("postgresql://neondb_owner:npg_ZHY54LBEdGtK@ep-ancient-tooth-aki8zbf5-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require")     // direct connection, used for migrations
 }
 
 model Session {

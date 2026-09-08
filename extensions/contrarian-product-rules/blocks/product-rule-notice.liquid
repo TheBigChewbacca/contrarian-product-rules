@@ -1,8 +1,3 @@
-{% comment %}
-  Optional product-page notice block for Contrarian Product Rules.
-  Pickup-only display logic will be added after the scaffold is verified.
-{% endcomment %}
-
 {% liquid
   assign rules = product.metafields.contrarian_product_rules.rules.value
 
@@ -13,56 +8,85 @@
 %}
 
 {% if preorder_rule and preorder_rule.enabled %}
-  <div
-    class="cpr-notice cpr-notice--preorder"
-    data-cpr-notice
-    data-cpr-rule="preorder"
-    {% if preorder_rule.releaseDate != blank %}
-      data-release-date="{{ preorder_rule.releaseDate }}"
-    {% endif %}
-    {{ block.shopify_attributes }}
-  >
 
-    {% if preorder_rule.badgeText != blank %}
-      <div class="cpr-badge">
-        {{ preorder_rule.badgeText }}
-      </div>
-    {% endif %}
+<div
+  class="cpr-notice cpr-notice--preorder"
+  data-cpr-notice
+  {{ block.shopify_attributes }}
+>
 
-    {% if preorder_rule.message != blank %}
-      <p class="cpr-message">
-        {{ preorder_rule.message }}
-      </p>
-    {% endif %}
+  {% if preorder_rule.badgeText != blank %}
+    <div class="cpr-badge">
+      {{ preorder_rule.badgeText }}
+    </div>
+  {% endif %}
 
-    {% if preorder_rule.releaseDate != blank %}
-      <p class="cpr-release-date">
-        Release Date: {{ preorder_rule.releaseDate }}
-      </p>
-    {% endif %}
+  {% if preorder_rule.message != blank %}
+    <p class="cpr-message">
+      {{ preorder_rule.message }}
+    </p>
+  {% endif %}
 
-    {% if preorder_rule.showCountdown %}
-      <div
-        class="cpr-countdown"
-        data-cpr-countdown
-      ></div>
-    {% endif %}
-  </div>
+  {% if preorder_rule.releaseDate != blank %}
+    <p class="cpr-release-date">
+      Release Date: {{ preorder_rule.releaseDate }}
+    </p>
+  {% endif %}
+
+</div>
 
 {% elsif pickup_rule and pickup_rule.enabled %}
 
-  <div
-    class="cpr-notice cpr-notice--pickup"
-    data-cpr-notice
-    data-cpr-rule="pickup-only"
-    {{ block.shopify_attributes }}
-  >
-    <p class="cpr-message">
-      {{ pickup_rule.message }}
-    </p>
-  </div>
+<div
+  class="cpr-notice cpr-notice--pickup"
+  data-cpr-notice
+  {{ block.shopify_attributes }}
+>
+  <p class="cpr-message">
+    {{ pickup_rule.message }}
+  </p>
+</div>
 
 {% endif %}
+
+<style>
+.cpr-notice {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.cpr-notice--preorder {
+  background: #eef6ff;
+  border: 1px solid #93c5fd;
+}
+
+.cpr-notice--pickup {
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+}
+
+.cpr-badge {
+  display: inline-block;
+  font-weight: bold;
+  text-transform: uppercase;
+  background: #2563eb;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  margin-bottom: 0.5rem;
+}
+
+.cpr-message {
+  margin: 0;
+}
+
+.cpr-release-date {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+</style>
 
 {% schema %}
 {

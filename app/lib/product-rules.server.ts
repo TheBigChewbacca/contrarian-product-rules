@@ -70,7 +70,7 @@ export type ProductRuleProduct = {
 
 export type DeliveryProfile = { id: string; name: string; default: boolean };
 
-export type ProductRuleSummary = Pick
+export type ProductRuleSummary = Pick<
   ProductRuleProduct,
   "id" | "title" | "featuredImage" | "rulesValue" | "legacyPickupOnly"
 > & { variantIds: string[] };
@@ -260,11 +260,24 @@ export async function saveProductRules(
   productId: string,
   rules: ProductRulesV1,
 ): Promise<GraphQLUserError[]> {
+  const serializedRules = JSON.stringify(rules);
+
   const response = await admin.graphql(
     `#graphql
       mutation ProductRulesSave($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
-          userErrors { field message }
+          metafields {
+            id
+            namespace
+            key
+            type
+            value
+          }
+          userErrors {
+            field
+            message
+            code
+          }
         }
       }`,
     {
@@ -275,20 +288,62 @@ export async function saveProductRules(
             namespace: NAMESPACE,
             key: KEY,
             type: "json",
-            value: JSON.stringify(rules),
+            value: serializedRules,
           },
         ],
       },
     },
   );
+
   const result = (await response.json()) as {
-    data?: { metafieldsSet?: { userErrors: GraphQLUserError[] } };
+    data?: {
+      metafieldsSet?: {
+        metafields: Array<{
+          id: string;
+          namespace: string;
+          key: string;
+          type: string;
+          value: string;
+        }> | null;
+        userErrors: Array<{
+          field?: string[];
+          message: string;
+          code?: string;
+        }>;
+      };
+    };
     errors?: Array<{ message: string }>;
   };
-  return [
-    ...(result.errors ?? []).map((error) => ({ message: error.message })),
+
+  const errors: GraphQLUserError[] = [
+    ...(result.errors ?? []).map((error) => ({
+      message: error.message,
+    })),
     ...(result.data?.metafieldsSet?.userErrors ?? []),
   ];
+
+  console.log("Product rules metafield save result", {
+    productId,
+    expectedNamespace: NAMESPACE,
+    expectedKey: KEY,
+    submittedRules: rules,
+    savedMetafields: result.data?.metafieldsSet?.metafields ?? [],
+    errors,
+  });
+
+  if (
+    errors.length === 0 &&
+    !result.data?.metafieldsSet?.metafields?.length
+  ) {
+    return [
+      {
+        message:
+          "Shopify returned no errors, but did not return a saved metafield.",
+      },
+    ];
+  }
+
+  return errors;
 }
 
 export async function assignProductToDeliveryProfile(
@@ -524,4 +579,51 @@ export async function fixPickupDeliveryProfileMismatches(
   }
 
   return errors.filter((error) => error.message);
+}
+
+const DELIVERY_PROFILE_VARIANT_BATCH_SIZE = 250;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// Collects variant IDs for every product that currently has Pickup Only
+// enabled, across the whole catalog (paginated).
+export async function loadEnabledPickupVariantIds(
+  admin: AdminApiContext,
+): Promise<string[]> {
+  const products = await loadAllProductRuleSummaries(admin);
+  return products
+    .filter((product) => normalizeProductRules(product.rulesValue, product.legacyPickupOnly).pickup_only.enabled)
+    .flatMap((product) => product.variantIds);
+}
+
+// Moves a batch of variants from one delivery profile to another in chunks,
+// instead of one deliveryProfileUpdate call per product. Chunks are applied
+// sequentially (not in parallel) because concurrent deliveryProfileUpdate
+// calls against the same profile can race.
+export async function reassignPickupProfileVariants(
+  admin: AdminApiContext,
+  previousProfileId: string,
+  nextProfileId: string,
+  variantIds: string[],
+): Promise<GraphQLUserError[]> {
+  if (previousProfileId === nextProfileId || variantIds.length === 0) return [];
+
+  const errors: GraphQLUserError[] = [];
+  for (const batch of chunkArray(variantIds, DELIVERY_PROFILE_VARIANT_BATCH_SIZE)) {
+    if (previousProfileId) {
+      errors.push(...(await removeProductFromDeliveryProfile(admin, previousProfileId, batch)));
+    }
+    if (nextProfileId) {
+      errors.push(...(await assignProductToDeliveryProfile(admin, nextProfileId, batch)));
+    }
+    if (errors.length > 0) break;
+  }
+
+  return errors;
 }

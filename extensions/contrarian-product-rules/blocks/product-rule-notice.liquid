@@ -2,6 +2,9 @@ THIS IS THE NEW CPR BLOCK
 
 {% assign rules = product.metafields.contrarian_product_rules.rules %}
 
+{{ rules.preorder.enabled }}
+{{ rules.preorder.message }}
+
 <pre>
 RULES:
 {{ rules | json }}

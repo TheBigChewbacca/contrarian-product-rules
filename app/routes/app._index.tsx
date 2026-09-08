@@ -13,16 +13,15 @@ import {
   fixPickupDeliveryProfileMismatches,
   loadProduct,
   loadDeliveryProfiles,
+  loadEnabledPickupVariantIds,
   loadPickupShippingProfile,
   loadProductRuleSummaries,
-  loadAllProductRuleSummaries,
+  reassignPickupProfileVariants,
   resolveDefaultDeliveryProfileId,
   resolveProductRules,
   savePickupShippingProfile,
   saveProductRules,
   syncProductPickupProfile,
-  removeProductFromDeliveryProfile,
-  assignProductToDeliveryProfile,
   type GraphQLUserError,
   type PickupProfileMismatch,
 } from "../lib/product-rules.server";
@@ -47,24 +46,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = String(formData.get("action") || "toggle");
 
-  if (actionType === "profile") {
+if (actionType === "profile") {
     const profileId = String(formData.get("profileId") || "");
     const previousProfileId = await loadPickupShippingProfile(session.shop);
     if (previousProfileId !== profileId) {
-      const products = await loadAllProductRuleSummaries(admin);
-      const enabledProducts = products.filter((product) => {
-        const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
-        return rules.pickup_only.enabled;
-      });
-      const errors: GraphQLUserError[] = [];
-      for (const product of enabledProducts) {
-        const removed = await removeProductFromDeliveryProfile(admin, previousProfileId, product.variantIds);
-        const added = profileId
-          ? await assignProductToDeliveryProfile(admin, profileId, product.variantIds)
-          : [];
-        errors.push(...removed, ...added);
-        if (errors.length > 0) break;
-      }
+      const variantIds = await loadEnabledPickupVariantIds(admin);
+      const errors = await reassignPickupProfileVariants(admin, previousProfileId, profileId, variantIds);
       if (errors.length > 0) return { ok: false, message: errors.map((error) => error.message).join(" ") };
     }
     await savePickupShippingProfile(session.shop, profileId);

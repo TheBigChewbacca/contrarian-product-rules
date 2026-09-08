@@ -1,93 +1,11 @@
-{% liquid
-  assign rules = product.metafields.contrarian_product_rules.rules.value
+THIS IS THE NEW CPR BLOCK
 
-  if rules
-    assign pickup_rule = rules.pickup_only
-    assign preorder_rule = rules.preorder
-  endif
-%}
+{% assign rules = product.metafields.contrarian_product_rules.rules %}
 
-{% if preorder_rule and preorder_rule.enabled %}
-
-<div
-  class="cpr-notice cpr-notice--preorder"
-  data-cpr-notice
-  {{ block.shopify_attributes }}
->
-
-  {% if preorder_rule.badgeText != blank %}
-    <div class="cpr-badge">
-      {{ preorder_rule.badgeText }}
-    </div>
-  {% endif %}
-
-  {% if preorder_rule.message != blank %}
-    <p class="cpr-message">
-      {{ preorder_rule.message }}
-    </p>
-  {% endif %}
-
-  {% if preorder_rule.releaseDate != blank %}
-    <p class="cpr-release-date">
-      Release Date: {{ preorder_rule.releaseDate }}
-    </p>
-  {% endif %}
-
-</div>
-
-{% elsif pickup_rule and pickup_rule.enabled %}
-
-<div
-  class="cpr-notice cpr-notice--pickup"
-  data-cpr-notice
-  {{ block.shopify_attributes }}
->
-  <p class="cpr-message">
-    {{ pickup_rule.message }}
-  </p>
-</div>
-
-{% endif %}
-
-<style>
-.cpr-notice {
-  margin: 1rem 0;
-  padding: 1rem;
-  border-radius: 8px;
-}
-
-.cpr-notice--preorder {
-  background: #eef6ff;
-  border: 1px solid #93c5fd;
-}
-
-.cpr-notice--pickup {
-  background: #fef3c7;
-  border: 1px solid #fbbf24;
-}
-
-.cpr-badge {
-  display: inline-block;
-  font-weight: bold;
-  text-transform: uppercase;
-  background: #2563eb;
-  color: white;
-  padding: 0.25rem 0.75rem;
-  border-radius: 999px;
-  margin-bottom: 0.5rem;
-}
-
-.cpr-message {
-  margin: 0;
-}
-
-.cpr-release-date {
-    margin-top: 0.5rem;
-    font-size: 1.5rem;
-    opacity: 0.8;
-    font-weight: bolder;
-}
-</style>
+<pre>
+RULES:
+{{ rules | json }}
+</pre>
 
 {% schema %}
 {

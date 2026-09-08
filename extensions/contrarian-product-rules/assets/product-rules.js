@@ -406,7 +406,7 @@
     }, true);
   }
 
-  function watchPreorderAddToCart(appElement, message) {
+  function watchPreorderAddToCart(appElement) {
     if (appElement.dataset.cprPreorderWatcher === "true") return;
     appElement.dataset.cprPreorderWatcher = "true";
     document.addEventListener("click", function (event) {
@@ -433,7 +433,7 @@
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      renderConfirmation(appElement, form, target, message, "Preorder item confirmation");
+      renderConfirmation(appElement, form, target, appElement.dataset.cprPreorderMessage, "Preorder item confirmation");
     }, true);
     document.addEventListener("submit", function (event) {
       if (!(event.target instanceof HTMLFormElement) || !event.target.action.includes("/cart/add")) return;
@@ -444,7 +444,7 @@
         return;
       }
       event.preventDefault();
-      renderConfirmation(appElement, form, event.submitter, message, "Preorder item confirmation");
+      renderConfirmation(appElement, form, event.submitter, appElement.dataset.cprPreorderMessage, "Preorder item confirmation");
     }, true);
   }
 
@@ -527,15 +527,14 @@
         ? context.rules.preorder
         : null;
 
-      appElement.dataset.cprPreorderEnabled = preorder ? "true" : "false";
-      document.documentElement.classList.toggle("cpr-has-preorder-rule", Boolean(preorder));
+    appElement.dataset.cprPreorderEnabled = preorder ? "true" : "false";
+    appElement.dataset.cprPreorderMessage = preorder
+      ? `This preorder item will be released on ${preorder.releaseDate || "the preorder release date"}. Please confirm that you want to continue.`
+      : "";
+    document.documentElement.classList.toggle("cpr-has-preorder-rule", Boolean(preorder));
     renderPreorder(appElement, preorder, appElement.dataset.cprStoreTimezone || "UTC");
     if (preorder) {
-      const releaseDate = preorder.releaseDate || "the preorder release date";
-      watchPreorderAddToCart(
-        appElement,
-        `This preorder item will be released on ${releaseDate}. Please confirm that you want to continue.`,
-      );
+      watchPreorderAddToCart(appElement);
     }
 
     if (pickupOnly.enabled && !preorder) {

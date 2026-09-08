@@ -114,19 +114,18 @@ export function parseProductRules(value: unknown): ProductRulesV1 | null {
   }
 
   if (isRecord(legacy) && !Array.isArray(legacy.rules) && legacy.version === CURRENT_RULES_VERSION) {
-    const pickupOnly = legacy.pickup_only;
-    if (!isRecord(pickupOnly) || typeof pickupOnly.enabled !== "boolean") {
+    const pickupOnly = isRecord(legacy.pickup_only) ? legacy.pickup_only : null;
+    const preorder = isRecord(legacy.preorder) ? legacy.preorder : null;
+    if (!pickupOnly && !preorder) {
       return null;
     }
-
-    const preorder = isRecord(legacy.preorder) ? legacy.preorder : null;
 
     return {
       version: CURRENT_RULES_VERSION,
       pickup_only: {
-        enabled: pickupOnly.enabled,
+        enabled: pickupOnly?.enabled === true,
         message:
-          typeof pickupOnly.message === "string"
+          typeof pickupOnly?.message === "string"
             ? pickupOnly.message
             : DEFAULT_PICKUP_ONLY_MESSAGE,
       },

@@ -17,16 +17,9 @@
   endif
 -%}
 
-{% if cpr_is_product_page %}
-<div style="background:red;color:white;padding:20px;position:fixed;top:0;left:0;z-index:9999;">
-  EMBED IS RUNNING
-</div>
-{% endif %}
-
 <div
   data-cpr-app
   data-cpr-version="1.0.0"
-  data-cpr-debug="{{ block.settings.debug_mode }}"
   data-cpr-product-page="{{ cpr_is_product_page }}"
   data-cpr-store-timezone="{{ shop.timezone | escape }}"
   {% if cpr_is_product_page %}
@@ -43,15 +36,7 @@
   "name": "Contrarian Product Rules",
   "target": "body",
   "javascript": "product-rules.js",
-  "stylesheet": "product-rules.css",
-  "settings": [
-    {
-      "type": "checkbox",
-      "id": "debug_mode",
-      "label": "Enable debug mode",
-      "default": false
-    }
-  ]
+  "stylesheet": "product-rules.css"
 }
 {% endschema %}
 

@@ -8,11 +8,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package.json package-lock.json* ./
-
 RUN npm ci --omit=dev && npm cache clean --force
-
 COPY . .
-
+RUN npx prisma generate
 RUN npm run build
 
-CMD ["npm", "run", "docker-start"]
+CMD ["npm", "run", "start"]

@@ -50,11 +50,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     String(formData.get("badgeText") || "").trim() ||
     DEFAULT_PREORDER_BADGE,
   showCountdown: formData.get("showCountdown") === "true",
-  appliedTo: selectedIds.map((id) => ({
-    id,
-    title: id,
-    type: "product",
-  })),
 };
   const results = await Promise.all(selectedIds.map(async (productId) => {
     const product = await loadProduct(admin, productId);

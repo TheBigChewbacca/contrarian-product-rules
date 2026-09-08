@@ -525,3 +525,50 @@ export async function fixPickupDeliveryProfileMismatches(
 
   return errors.filter((error) => error.message);
 }
+
+const DELIVERY_PROFILE_VARIANT_BATCH_SIZE = 250;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// Collects variant IDs for every product that currently has Pickup Only
+// enabled, across the whole catalog (paginated).
+export async function loadEnabledPickupVariantIds(
+  admin: AdminApiContext,
+): Promise<string[]> {
+  const products = await loadAllProductRuleSummaries(admin);
+  return products
+    .filter((product) => normalizeProductRules(product.rulesValue, product.legacyPickupOnly).pickup_only.enabled)
+    .flatMap((product) => product.variantIds);
+}
+
+// Moves a batch of variants from one delivery profile to another in chunks,
+// instead of one deliveryProfileUpdate call per product. Chunks are applied
+// sequentially (not in parallel) because concurrent deliveryProfileUpdate
+// calls against the same profile can race.
+export async function reassignPickupProfileVariants(
+  admin: AdminApiContext,
+  previousProfileId: string,
+  nextProfileId: string,
+  variantIds: string[],
+): Promise<GraphQLUserError[]> {
+  if (previousProfileId === nextProfileId || variantIds.length === 0) return [];
+
+  const errors: GraphQLUserError[] = [];
+  for (const batch of chunkArray(variantIds, DELIVERY_PROFILE_VARIANT_BATCH_SIZE)) {
+    if (previousProfileId) {
+      errors.push(...(await removeProductFromDeliveryProfile(admin, previousProfileId, batch)));
+    }
+    if (nextProfileId) {
+      errors.push(...(await assignProductToDeliveryProfile(admin, nextProfileId, batch)));
+    }
+    if (errors.length > 0) break;
+  }
+
+  return errors;
+}

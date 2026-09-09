@@ -255,6 +255,59 @@ export function resolveProductRules(product: ProductRuleProduct): {
   };
 }
 
+const PREORDER_COLLECTION_ID = "gid://shopify/Collection/481852457263";
+
+export async function syncPreorderCollection(
+  admin: AdminApiContext,
+  productId: string,
+  enabled: boolean,
+): Promise<GraphQLUserError[]> {
+  const collectionResponse = await admin.graphql(
+    `#graphql
+      query PreorderCollectionProducts($id: ID!) {
+        collection(id: $id) {
+          products(first: 250) {
+            nodes { id }
+          }
+        }
+      }`,
+    { variables: { id: PREORDER_COLLECTION_ID } },
+  );
+  const collectionResult = (await collectionResponse.json()) as {
+    data?: { collection?: { products: { nodes: Array<{ id: string }> } } | null };
+    errors?: Array<{ message: string }>;
+  };
+  const collectionErrors = graphQLErrors(collectionResult);
+  if (collectionErrors.length > 0) return collectionErrors;
+  if (!collectionResult.data?.collection) {
+    return [{ message: "The configured preorder collection could not be found." }];
+  }
+
+  const isMember = collectionResult.data.collection.products.nodes.some(
+    (product) => product.id === productId,
+  );
+  if (isMember === enabled) return [];
+
+  const mutation = enabled ? "collectionAddProducts" : "collectionRemoveProducts";
+  const response = await admin.graphql(
+    `#graphql
+      mutation SyncPreorderCollection($id: ID!, $productIds: [ID!]!) {
+        ${mutation}(id: $id, productIds: $productIds) {
+          userErrors { field message }
+        }
+      }`,
+    { variables: { id: PREORDER_COLLECTION_ID, productIds: [productId] } },
+  );
+  const result = (await response.json()) as {
+    data?: Record<string, { userErrors: GraphQLUserError[] }>;
+    errors?: Array<{ message: string }>;
+  };
+  return [
+    ...graphQLErrors(result),
+    ...(result.data?.[mutation]?.userErrors ?? []),
+  ];
+}
+
 export async function saveProductRules(
   admin: AdminApiContext,
   productId: string,
@@ -440,9 +493,6 @@ export async function syncProductPickupProfile(
     if (pickupProfileId) {
       errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, variantIds)));
     }
-    if (defaultProfileId && defaultProfileId !== pickupProfileId) {
-      errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, variantIds)));
-    }
   } else {
     if (pickupProfileId) {
       errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, variantIds)));
@@ -567,9 +617,6 @@ export async function fixPickupDeliveryProfileMismatches(
 
     if (mismatch.type === "missing_from_pickup") {
       errors.push(...(await assignProductToDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
-      if (defaultProfileId && defaultProfileId !== pickupProfileId) {
-        errors.push(...(await removeProductFromDeliveryProfile(admin, defaultProfileId, mismatch.variantIds)));
-      }
     } else {
       errors.push(...(await removeProductFromDeliveryProfile(admin, pickupProfileId, mismatch.variantIds)));
       if (defaultProfileId) {

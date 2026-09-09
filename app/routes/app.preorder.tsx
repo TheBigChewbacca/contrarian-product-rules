@@ -4,7 +4,7 @@ import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { loadProduct, resolveProductRules, saveProductRules } from "../lib/product-rules.server";
+import { loadProduct, resolveProductRules, saveProductRules, syncPreorderCollection } from "../lib/product-rules.server";
 import {
   DEFAULT_PREORDER_BADGE,
   DEFAULT_PREORDER_MESSAGE,
@@ -54,11 +54,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const results = await Promise.all(selectedIds.map(async (productId) => {
     const product = await loadProduct(admin, productId);
     const existing = product ? resolveProductRules(product).rules : null;
-    return saveProductRules(admin, productId, {
+    const errors = await saveProductRules(admin, productId, {
       version: 1,
       pickup_only: existing?.pickup_only ?? { enabled: false, message: "" },
       preorder,
     });
+    if (errors.length > 0) return errors;
+    return syncPreorderCollection(admin, productId, preorder.enabled);
   }));
   const errors = results.flat();
   return { ok: errors.length === 0, errors };

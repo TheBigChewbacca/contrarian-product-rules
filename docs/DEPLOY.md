@@ -8,6 +8,13 @@ The pipeline is: build image → push to Artifact Registry → apply Prisma
 migrations → deploy a revision **with no traffic** → smoke-test it → shift 100%
 of traffic. A failed smoke test leaves the previous revision serving.
 
+The one exception is the very first deploy, when the Cloud Run service does not
+exist yet. Cloud Run rejects `--no-traffic` on service creation — there is no
+existing revision for traffic to stay on — so the workflow detects that case and
+creates the service normally. The first revision therefore takes traffic
+immediately, which is safe because nothing points at it yet: Shopify is still
+sending users to Render until step 4.
+
 | Setting | Value |
 | --- | --- |
 | GCP project | `elaborate-howl-469119-f6` |

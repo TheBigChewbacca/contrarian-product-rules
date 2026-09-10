@@ -82,40 +82,56 @@ jobs:
           DIRECT_URL: ${{ secrets.PRISMA_DIRECT_URL }}
         run: npx prisma migrate deploy
 
-      - name: Deploy new revision (no traffic)
+      # A brand-new service cannot be created with --no-traffic: Cloud Run
+      # rejects it, because there is no existing revision for traffic to stay
+      # on. So the first deploy is a plain create, and every deploy after it
+      # uses the candidate-then-promote flow.
+      - name: Deploy new revision
         id: revision
         run: |
-          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
-            --region "${{ vars.GCP_REGION }}" \
-            --image "$IMAGE:${{ github.sha }}" \
-            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SA }}" \
-            --revision-suffix "sha-$(echo '${{ github.sha }}' | cut -c1-8)" \
-            --no-traffic \
-            --tag candidate \
-            --platform managed \
-            --allow-unauthenticated \
-            --port 8080 \
-            --cpu 1 \
-            --memory 512Mi \
-            --min-instances 1 \
-            --max-instances 10 \
-            --timeout 300 \
-            --set-env-vars "NODE_ENV=production" \
-            --set-secrets "DATABASE_URL=cpr-database-url:latest,DIRECT_URL=cpr-direct-url:latest,SHOPIFY_API_KEY=cpr-shopify-api-key:latest,SHOPIFY_API_SECRET=cpr-shopify-api-secret:latest,SHOPIFY_APP_URL=cpr-shopify-app-url:latest,SCOPES=cpr-scopes:latest" \
+          set -euo pipefail
+          SVC="${{ vars.CLOUD_RUN_SERVICE }}"
+          PROJECT="${{ vars.GCP_PROJECT_ID }}"
+          REGION="${{ vars.GCP_REGION }}"
+
+          COMMON=(
+            --project "$PROJECT"
+            --region "$REGION"
+            --image "$IMAGE:${{ github.sha }}"
+            --service-account "${{ vars.CLOUD_RUN_RUNTIME_SA }}"
+            --revision-suffix "sha-$(echo '${{ github.sha }}' | cut -c1-8)"
+            --platform managed
+            --allow-unauthenticated
+            --port 8080
+            --cpu 1
+            --memory 512Mi
+            --min-instances 1
+            --max-instances 10
+            --timeout 300
+            --set-env-vars "NODE_ENV=production"
+            --set-secrets "DATABASE_URL=cpr-database-url:latest,DIRECT_URL=cpr-direct-url:latest,SHOPIFY_API_KEY=cpr-shopify-api-key:latest,SHOPIFY_API_SECRET=cpr-shopify-api-secret:latest,SHOPIFY_APP_URL=cpr-shopify-app-url:latest,SCOPES=cpr-scopes:latest"
             --quiet
+          )
 
-          CANDIDATE_URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
-            --region "${{ vars.GCP_REGION }}" \
-            --format 'value(status.traffic.filter("tag:candidate").extract("url"))' | tr -d '[]')
-          echo "candidate_url=$CANDIDATE_URL" >> "$GITHUB_OUTPUT"
-          echo "Candidate revision: $CANDIDATE_URL"
+          if gcloud run services describe "$SVC" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1; then
+            echo "Service exists - deploying a candidate revision that takes no traffic."
+            gcloud run deploy "$SVC" "${COMMON[@]}" --no-traffic --tag candidate
+            TARGET_URL=$(gcloud run services describe "$SVC"               --project "$PROJECT" --region "$REGION"               --format 'value(status.traffic.filter("tag:candidate").extract("url"))' | tr -d '[]')
+            echo "promote=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Service does not exist yet - creating it. Nothing is serving it, so this first revision takes traffic immediately."
+            gcloud run deploy "$SVC" "${COMMON[@]}"
+            TARGET_URL=$(gcloud run services describe "$SVC"               --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
+            echo "promote=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Smoke test candidate revision
+          echo "target_url=$TARGET_URL" >> "$GITHUB_OUTPUT"
+          echo "Smoke testing: $TARGET_URL"
+
+      - name: Smoke test the new revision
         run: |
-          URL="${{ steps.revision.outputs.candidate_url }}/healthz"
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          URL="${{ steps.revision.outputs.target_url }}/healthz"
+          for attempt in $(seq 1 10); do
             CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || true)
             if [ "$CODE" = "200" ]; then
               echo "Healthy after ${attempt} attempt(s)."
@@ -124,13 +140,12 @@ jobs:
             echo "Attempt ${attempt}: HTTP ${CODE:-no response}; retrying in 6s"
             sleep 6
           done
-          echo "Candidate revision never became healthy. Traffic was not shifted."
+          echo "Revision never became healthy. Traffic was not shifted."
           exit 1
 
+      # Skipped on the very first deploy, where the new revision already holds
+      # all traffic because it is the only one.
       - name: Shift all traffic to the new revision
+        if: steps.revision.outputs.promote == 'true'
         run: |
-          gcloud run services update-traffic "${{ vars.CLOUD_RUN_SERVICE }}" \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
-            --region "${{ vars.GCP_REGION }}" \
-            --to-latest \
-            --quiet
+          gcloud run services update-traffic "${{ vars.CLOUD_RUN_SERVICE }}"             --project "${{ vars.GCP_PROJECT_ID }}"             --region "${{ vars.GCP_REGION }}"             --to-latest             --quiet

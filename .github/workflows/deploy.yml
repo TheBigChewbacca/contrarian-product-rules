@@ -116,13 +116,23 @@ jobs:
           if gcloud run services describe "$SVC" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1; then
             echo "Service exists - deploying a candidate revision that takes no traffic."
             gcloud run deploy "$SVC" "${COMMON[@]}" --no-traffic --tag candidate
-            TARGET_URL=$(gcloud run services describe "$SVC"               --project "$PROJECT" --region "$REGION"               --format 'value(status.traffic.filter("tag:candidate").extract("url"))' | tr -d '[]')
+            TARGET_URL=$(gcloud run services describe "$SVC"               --project "$PROJECT" --region "$REGION"               --format 'value(status.traffic.filter("tag:candidate").extract("url"))')
             echo "promote=true" >> "$GITHUB_OUTPUT"
           else
             echo "Service does not exist yet - creating it. Nothing is serving it, so this first revision takes traffic immediately."
             gcloud run deploy "$SVC" "${COMMON[@]}"
             TARGET_URL=$(gcloud run services describe "$SVC"               --project "$PROJECT" --region "$REGION" --format 'value(status.url)')
             echo "promote=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # gcloud's extract() renders a list, so the value arrives wrapped in
+          # brackets and quotes: ['https://...']. Left in, curl gets a URL with
+          # literal quotes in it and reports HTTP 000 for every attempt.
+          TARGET_URL=$(printf '%s' "$TARGET_URL" | tr -d "[]'\"" | tr -d '[:space:]')
+
+          if ! printf '%s' "$TARGET_URL" | grep -Eq '^https://[A-Za-z0-9.-]+$'; then
+            echo "Could not determine a usable URL for the new revision. Got: '$TARGET_URL'"
+            exit 1
           fi
 
           echo "target_url=$TARGET_URL" >> "$GITHUB_OUTPUT"

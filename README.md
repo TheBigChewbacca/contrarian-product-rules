@@ -179,14 +179,20 @@ pnpm run build
 
 ## Hosting
 
-When you're ready to set up your app in production, you can follow [our deployment documentation](https://shopify.dev/docs/apps/launch/deployment) to host it externally. From there, you have a few options:
+This app is deployed to **Google Cloud Run**, backed by **Neon Postgres**, from
+GitHub Actions on every push to `main`.
 
-- [Google Cloud Run](https://shopify.dev/docs/apps/launch/deployment/deploy-to-google-cloud-run): This tutorial is written specifically for this example repo, and is compatible with the extended steps included in the subsequent [**Build your app**](tutorial) in the **Getting started** docs. It is the most detailed tutorial for taking a React Router-based Shopify app and deploying it to production. It includes configuring permissions and secrets, setting up a production database, and even hosting your apps behind a load balancer across multiple regions.
-- [Fly.io](https://fly.io/docs/js/shopify/): Leverages the Fly.io CLI to quickly launch Shopify apps to a single machine.
-- [Render](https://render.com/docs/deploy-shopify-app): This tutorial guides you through using Docker to deploy and install apps on a Dev store.
-- [Manual deployment guide](https://shopify.dev/docs/apps/launch/deployment/deploy-to-hosting-service): This resource provides general guidance on the requirements of deployment including environment variables, secrets, and persistent data.
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the full runbook: GCP project setup,
+Workload Identity Federation, Secret Manager configuration, the cutover
+procedure, and rollback.
 
-When you reach the step for [setting up environment variables](https://shopify.dev/docs/apps/deployment/web#set-env-vars), you also need to set the variable `NODE_ENV=production`.
+Quick reference:
+
+- Pipeline: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+- Image: [`Dockerfile`](Dockerfile) (multi-stage; migrations are *not* run at
+  container start — see the runbook for why)
+- Health probe: `GET /healthz`
+- Local environment: copy [`.env.example`](.env.example) to `.env`
 
 ## Gotchas / Troubleshooting
 

@@ -4,7 +4,15 @@ import { useFetcher, useLoaderData, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { loadProduct, resolveProductRules, saveProductRules, syncPreorderCollection } from "../lib/product-rules.server";
+import {
+  loadCollections,
+  loadPreorderCollectionId,
+  loadProduct,
+  resolveProductRules,
+  saveProductRules,
+  savePreorderCollectionId,
+  syncPreorderCollection,
+} from "../lib/product-rules.server";
 import {
   DEFAULT_PREORDER_BADGE,
   DEFAULT_PREORDER_MESSAGE,
@@ -17,18 +25,30 @@ import {
 } from "../lib/product-rules";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const productId = new URL(request.url).searchParams.get("productId");
-  const product = productId ? await loadProduct(admin, productId) : null;
+  const [product, collections, preorderCollectionId] = await Promise.all([
+    productId ? loadProduct(admin, productId) : Promise.resolve(null),
+    loadCollections(admin),
+    loadPreorderCollectionId(session.shop),
+  ]);
   return {
     product,
+    collections,
+    preorderCollectionId,
     preorder: product ? resolveProductRules(product).rules.preorder ?? createDefaultPreorderRule() : createDefaultPreorderRule(),
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
+
+  if (String(formData.get("action") || "") === "collection") {
+    await savePreorderCollectionId(session.shop, String(formData.get("collectionId") || ""));
+    return { ok: true, errors: [] };
+  }
+
   let productIds: unknown;
   try {
     productIds = JSON.parse(String(formData.get("productIds") || "[]"));
@@ -51,6 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     DEFAULT_PREORDER_BADGE,
   showCountdown: formData.get("showCountdown") === "true",
 };
+  const preorderCollectionId = await loadPreorderCollectionId(session.shop);
   const results = await Promise.all(selectedIds.map(async (productId) => {
     const product = await loadProduct(admin, productId);
     const existing = product ? resolveProductRules(product).rules : null;
@@ -60,7 +81,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       preorder,
     });
     if (errors.length > 0) return errors;
-    return syncPreorderCollection(admin, productId, preorder.enabled);
+    return syncPreorderCollection(admin, productId, preorder.enabled, preorderCollectionId);
   }));
   const errors = results.flat();
   return { ok: errors.length === 0, errors };
@@ -76,6 +97,7 @@ function productFromPicker(value: unknown): RuleTarget | null {
 export default function PreorderPage() {
   const initial = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const collectionFetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const shopify = useAppBridge();
   const [preorder, setPreorder] = useState<PreorderRule>(initial.preorder);
@@ -133,6 +155,28 @@ export default function PreorderPage() {
           <s-text-field label="Badge text" value={preorder.badgeText} onInput={(event) => update({ badgeText: (event.target as HTMLInputElement).value })} disabled={isSaving} />
           <s-text-field label="Preorder message" value={preorder.message} onInput={(event) => update({ message: (event.target as HTMLInputElement).value })} disabled={isSaving} />
           <s-checkbox label="Show countdown" checked={preorder.showCountdown} onChange={(event) => update({ showCountdown: (event.target as HTMLInputElement).checked })} disabled={isSaving} />
+        </s-stack>
+      </s-section>
+      <s-section heading="Preorder collection">
+        <s-stack direction="block" gap="base">
+          <s-paragraph>
+            Products with Preorder enabled are added to this collection, and removed
+            from it when the rule is turned off. Leave it unset to skip collection sync.
+          </s-paragraph>
+          <s-select
+            label="Collection"
+            value={initial.preorderCollectionId}
+            disabled={collectionFetcher.state !== "idle"}
+            onChange={(event) => collectionFetcher.submit(
+              { action: "collection", collectionId: (event.target as HTMLSelectElement).value },
+              { method: "post" },
+            )}
+          >
+            <s-option value="">No collection sync</s-option>
+            {initial.collections.map((collection) => (
+              <s-option key={collection.id} value={collection.id}>{collection.title}</s-option>
+            ))}
+          </s-select>
         </s-stack>
       </s-section>
     </s-page>

@@ -1,14 +1,27 @@
-THIS IS THE NEW CPR BLOCK
+{% comment %}
+  Contrarian Product Rules — notice placement anchor.
 
-{% assign rules = product.metafields.contrarian_product_rules.rules %}
+  This block previously shipped debug scaffolding to the storefront: a literal
+  "THIS IS THE NEW CPR BLOCK" heading and a <pre> dump of the raw rules
+  metafield, both visible to customers on every product page.
 
-{{ rules.preorder.enabled }}
-{{ rules.preorder.message }}
+  The customer-facing notices are rendered by product-rules.js, which is loaded
+  by the app embed block (product-rules-embed.liquid) and injects the
+  .cpr-preorder and [data-cpr-pickup-notice] elements itself. Rendering the same
+  copy here would show every notice twice, so this block deliberately emits no
+  visible content — it only marks the position in the product section where a
+  merchant wants the notice to appear.
 
-<pre>
-RULES:
-{{ rules | json }}
-</pre>
+  The block is kept rather than deleted so that themes which already have it
+  placed do not break on update.
+{% endcomment %}
+
+<div
+  class="cpr-notice-anchor"
+  data-cpr-notice-anchor
+  data-cpr-product-id="{{ product.id }}"
+  hidden
+></div>
 
 {% schema %}
 {

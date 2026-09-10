@@ -2,7 +2,7 @@
 
 client_id = "d9e8820d821bd7b3d046eaca8681fec3"
 name = "contrarian-product-rules"
-application_url = "https://contrarian-product-rules.onrender.com"
+application_url = "https://contrarian-product-rules-198806279895.us-west1.run.app"
 embedded = true
 
 [access_scopes]
@@ -59,9 +59,9 @@ api_version = "2026-07"
 
 [auth]
 redirect_urls = [
-  "https://contrarian-product-rules.onrender.com/auth/callback",
-  "https://contrarian-product-rules.onrender.com/auth/shopify/callback",
-  "https://contrarian-product-rules.onrender.com/api/auth/callback"
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/auth/callback",
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/auth/shopify/callback",
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/api/auth/callback"
 ]
 
 [build]

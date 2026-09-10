@@ -235,7 +235,7 @@ Two places must agree, and both must match the Cloud Run URL exactly.
 a new revision picks it up:
 
 ```bash
-printf '%s' 'https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app' \
+printf '%s' 'https://contrarian-product-rules-198806279895.us-west1.run.app' \
   | gcloud secrets versions add cpr-shopify-app-url --data-file=-
 ```
 
@@ -243,13 +243,13 @@ printf '%s' 'https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app' \
 `onrender.com` references:
 
 ```toml
-application_url = "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app"
+application_url = "https://contrarian-product-rules-198806279895.us-west1.run.app"
 
 [auth]
 redirect_urls = [
-  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/auth/callback",
-  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/auth/shopify/callback",
-  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/api/auth/callback"
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/auth/callback",
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/auth/shopify/callback",
+  "https://contrarian-product-rules-198806279895.us-west1.run.app/api/auth/callback"
 ]
 ```
 

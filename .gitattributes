@@ -1,0 +1,9 @@
+# Theme-extension assets must be byte-stable across platforms.
+#
+# Shopify's theme check caps app-block JavaScript at 10000 bytes, and
+# product-rules.js is exactly at that limit. With core.autocrlf=true on Windows,
+# the single trailing LF became CRLF on checkout, making the on-disk file 10001
+# bytes and failing `shopify app deploy` by one byte. Pinning these to LF keeps
+# what Shopify uploads identical to what is committed.
+extensions/*/assets/*.js text eol=lf
+extensions/*/assets/*.css text eol=lf

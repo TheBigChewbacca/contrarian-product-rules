@@ -191,7 +191,7 @@ Quick reference:
 - Pipeline: [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
 - Image: [`Dockerfile`](Dockerfile) (multi-stage; migrations are *not* run at
   container start — see the runbook for why)
-- Health probe: `GET /healthz`
+- Health probe: `GET /health`
 - Local environment: copy [`.env.example`](.env.example) to `.env`
 
 ## Gotchas / Troubleshooting

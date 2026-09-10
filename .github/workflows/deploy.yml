@@ -128,9 +128,25 @@ jobs:
           echo "target_url=$TARGET_URL" >> "$GITHUB_OUTPUT"
           echo "Smoke testing: $TARGET_URL"
 
+      # gcloud downgrades a failed --allow-unauthenticated to a warning and
+      # still exits 0. That once produced a "successful" deploy of a service
+      # nothing could reach, so the binding is applied explicitly here and the
+      # job fails if it does not stick.
+      - name: Ensure the service is publicly invokable
+        run: |
+          set -euo pipefail
+          gcloud run services add-iam-policy-binding "${{ vars.CLOUD_RUN_SERVICE }}"             --project "${{ vars.GCP_PROJECT_ID }}"             --region "${{ vars.GCP_REGION }}"             --member=allUsers             --role=roles/run.invoker             --quiet
+
+          POLICY=$(gcloud run services get-iam-policy "${{ vars.CLOUD_RUN_SERVICE }}"             --project "${{ vars.GCP_PROJECT_ID }}"             --region "${{ vars.GCP_REGION }}" --format=json)
+          if ! echo "$POLICY" | grep -q '"allUsers"'; then
+            echo "allUsers is not bound to roles/run.invoker."
+            echo "Shopify calls this app anonymously, so it would receive 404s."
+            exit 1
+          fi
+
       - name: Smoke test the new revision
         run: |
-          URL="${{ steps.revision.outputs.target_url }}/healthz"
+          URL="${{ steps.revision.outputs.target_url }}/health"
           for attempt in $(seq 1 10); do
             CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || true)
             if [ "$CODE" = "200" ]; then

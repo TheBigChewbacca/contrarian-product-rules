@@ -8,26 +8,43 @@ The pipeline is: build image → push to Artifact Registry → apply Prisma
 migrations → deploy a revision **with no traffic** → smoke-test it → shift 100%
 of traffic. A failed smoke test leaves the previous revision serving.
 
-Throughout, replace the placeholders:
+| Setting | Value |
+| --- | --- |
+| GCP project | `elaborate-howl-469119-f6` |
+| Region | `us-west1` |
+| Cloud Run service | `contrarian-product-rules` |
+| Artifact Registry repo | `apps` |
+| Repository | `TheBigChewbacca/contrarian-product-rules` |
 
-| Placeholder | Meaning | Example |
-| --- | --- | --- |
-| `PROJECT_ID` | GCP project | `contrarian-prod` |
-| `PROJECT_NUMBER` | GCP project number (not the ID) | `123456789012` |
-| `REGION` | Cloud Run region | `us-central1` |
-| `SERVICE` | Cloud Run service name | `contrarian-product-rules` |
-| `AR_REPO` | Artifact Registry repo | `apps` |
-| `GH_OWNER/GH_REPO` | This repository | `TheBigChewbacca/contrarian-product-rules` |
+> **You do not need gcloud or Docker installed locally.** Docker only ever runs
+> on the GitHub Actions runner. For the gcloud commands below, open **Cloud
+> Shell** — the `>_` icon in the top-right of the Cloud Console. It has gcloud
+> pre-installed and already authenticated as you.
 
 ---
 
 ## 1. One-time GCP setup
 
+Paste this once per Cloud Shell session. Everything below depends on it.
+
+```bash
+export PROJECT_ID=elaborate-howl-469119-f6
+export REGION=us-west1
+export SERVICE=contrarian-product-rules
+export AR_REPO=apps
+export GH_REPO=TheBigChewbacca/contrarian-product-rules
+
+gcloud config set project "$PROJECT_ID"
+export PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+echo "Project number: $PROJECT_NUMBER"
+```
+
+Confirm billing is enabled on the project first — Cloud Run will refuse to
+deploy without it.
+
 ### Enable APIs
 
 ```bash
-gcloud config set project PROJECT_ID
-
 gcloud services enable \
   run.googleapis.com \
   artifactregistry.googleapis.com \
@@ -39,9 +56,9 @@ gcloud services enable \
 ### Create the Artifact Registry repository
 
 ```bash
-gcloud artifacts repositories create AR_REPO \
+gcloud artifacts repositories create "$AR_REPO" \
   --repository-format=docker \
-  --location=REGION \
+  --location="$REGION" \
   --description="Container images for Contrarian apps"
 ```
 
@@ -62,18 +79,18 @@ The **deployer** account is what GitHub Actions impersonates.
 gcloud iam service-accounts create gh-deployer \
   --display-name="GitHub Actions deployer"
 
-gcloud projects add-iam-policy-binding PROJECT_ID \
-  --member="serviceAccount:gh-deployer@PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:gh-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/run.admin"
 
-gcloud projects add-iam-policy-binding PROJECT_ID \
-  --member="serviceAccount:gh-deployer@PROJECT_ID.iam.gserviceaccount.com" \
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:gh-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.writer"
 
 # Required so the deployer can deploy a service that *runs as* the runtime SA.
 gcloud iam service-accounts add-iam-policy-binding \
-  cpr-runtime@PROJECT_ID.iam.gserviceaccount.com \
-  --member="serviceAccount:gh-deployer@PROJECT_ID.iam.gserviceaccount.com" \
+  "cpr-runtime@$PROJECT_ID.iam.gserviceaccount.com" \
+  --member="serviceAccount:gh-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountUser"
 ```
 
@@ -82,13 +99,15 @@ gcloud iam service-accounts add-iam-policy-binding \
 Every value the app reads at runtime lives here — nothing sensitive is set on
 the Cloud Run service directly, and nothing sensitive is committed.
 
+Replace the quoted values with your real ones before pasting.
+
 ```bash
 # Neon POOLED connection string (host contains "-pooler").
-printf '%s' 'postgresql://...-pooler.../neondb?sslmode=require' \
+printf '%s' 'postgresql://...-pooler.us-west-2.aws.neon.tech/neondb?sslmode=require' \
   | gcloud secrets create cpr-database-url --data-file=-
 
 # Neon DIRECT (non-pooled) connection string.
-printf '%s' 'postgresql://.../neondb?sslmode=require' \
+printf '%s' 'postgresql://....us-west-2.aws.neon.tech/neondb?sslmode=require' \
   | gcloud secrets create cpr-direct-url --data-file=-
 
 printf '%s' 'YOUR_SHOPIFY_API_KEY'    | gcloud secrets create cpr-shopify-api-key --data-file=-
@@ -102,13 +121,17 @@ printf '%s' 'read_products,write_products,read_orders,write_orders,read_shipping
   | gcloud secrets create cpr-scopes --data-file=-
 ```
 
+The Shopify API key and secret are in the Partner Dashboard under your app →
+**Configuration** → **Client credentials**. The client ID there should match the
+`client_id` in [`shopify.app.toml`](../shopify.app.toml).
+
 Grant the runtime account read access to each:
 
 ```bash
 for SECRET in cpr-database-url cpr-direct-url cpr-shopify-api-key \
               cpr-shopify-api-secret cpr-shopify-app-url cpr-scopes; do
   gcloud secrets add-iam-policy-binding "$SECRET" \
-    --member="serviceAccount:cpr-runtime@PROJECT_ID.iam.gserviceaccount.com" \
+    --member="serviceAccount:cpr-runtime@$PROJECT_ID.iam.gserviceaccount.com" \
     --role="roles/secretmanager.secretAccessor"
 done
 ```
@@ -129,7 +152,7 @@ gcloud iam workload-identity-pools providers create-oidc github-provider \
   --display-name="GitHub OIDC" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-  --attribute-condition="assertion.repository == 'GH_OWNER/GH_REPO'"
+  --attribute-condition="assertion.repository == '$GH_REPO'"
 ```
 
 The `--attribute-condition` is what stops any other repository on GitHub from
@@ -139,9 +162,17 @@ Bind the deployer account to this repository:
 
 ```bash
 gcloud iam service-accounts add-iam-policy-binding \
-  gh-deployer@PROJECT_ID.iam.gserviceaccount.com \
+  "gh-deployer@$PROJECT_ID.iam.gserviceaccount.com" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/GH_OWNER/GH_REPO"
+  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$GH_REPO"
+```
+
+Finally, print the values you need for GitHub:
+
+```bash
+echo "GCP_WORKLOAD_IDP = projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github-provider"
+echo "GCP_SERVICE_ACCOUNT = gh-deployer@$PROJECT_ID.iam.gserviceaccount.com"
+echo "CLOUD_RUN_RUNTIME_SA = cpr-runtime@$PROJECT_ID.iam.gserviceaccount.com"
 ```
 
 ---
@@ -154,13 +185,16 @@ Under **Settings → Secrets and variables → Actions**:
 
 | Name | Value |
 | --- | --- |
-| `GCP_PROJECT_ID` | `PROJECT_ID` |
-| `GCP_REGION` | `REGION` |
-| `GCP_ARTIFACT_REPOSITORY` | `AR_REPO` |
-| `CLOUD_RUN_SERVICE` | `SERVICE` |
-| `GCP_SERVICE_ACCOUNT` | `gh-deployer@PROJECT_ID.iam.gserviceaccount.com` |
-| `CLOUD_RUN_RUNTIME_SA` | `cpr-runtime@PROJECT_ID.iam.gserviceaccount.com` |
-| `GCP_WORKLOAD_IDP` | `projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github-provider` |
+| `GCP_PROJECT_ID` | `elaborate-howl-469119-f6` |
+| `GCP_REGION` | `us-west1` |
+| `GCP_ARTIFACT_REPOSITORY` | `apps` |
+| `CLOUD_RUN_SERVICE` | `contrarian-product-rules` |
+| `GCP_SERVICE_ACCOUNT` | `gh-deployer@elaborate-howl-469119-f6.iam.gserviceaccount.com` |
+| `CLOUD_RUN_RUNTIME_SA` | `cpr-runtime@elaborate-howl-469119-f6.iam.gserviceaccount.com` |
+| `GCP_WORKLOAD_IDP` | `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/github/providers/github-provider` |
+
+`<PROJECT_NUMBER>` is the number printed at the end of step 1 — it is not the
+project ID.
 
 **Secrets:**
 
@@ -180,7 +214,7 @@ Push to `main`, or run the **Deploy to Cloud Run** workflow manually from the
 Actions tab. Then read the service URL:
 
 ```bash
-gcloud run services describe SERVICE --region REGION \
+gcloud run services describe "$SERVICE" --region "$REGION" \
   --format='value(status.url)'
 ```
 
@@ -190,24 +224,25 @@ gcloud run services describe SERVICE --region REGION \
 
 Two places must agree, and both must match the Cloud Run URL exactly.
 
-**a. `SHOPIFY_APP_URL`** — update the secret and redeploy so the new revision
-picks it up:
+**a. `SHOPIFY_APP_URL`** — update the secret, then re-run the deploy workflow so
+a new revision picks it up:
 
 ```bash
-printf '%s' 'https://SERVICE-xxxxxxxxxx-uc.a.run.app' \
+printf '%s' 'https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app' \
   | gcloud secrets versions add cpr-shopify-app-url --data-file=-
 ```
 
-**b. `shopify.app.toml`** — replace all four `onrender.com` references:
+**b. [`shopify.app.toml`](../shopify.app.toml)** — replace all four
+`onrender.com` references:
 
 ```toml
-application_url = "https://SERVICE-xxxxxxxxxx-uc.a.run.app"
+application_url = "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app"
 
 [auth]
 redirect_urls = [
-  "https://SERVICE-xxxxxxxxxx-uc.a.run.app/auth/callback",
-  "https://SERVICE-xxxxxxxxxx-uc.a.run.app/auth/shopify/callback",
-  "https://SERVICE-xxxxxxxxxx-uc.a.run.app/api/auth/callback"
+  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/auth/callback",
+  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/auth/shopify/callback",
+  "https://contrarian-product-rules-XXXXXXXXX-uw.a.run.app/api/auth/callback"
 ]
 ```
 
@@ -223,7 +258,7 @@ session will rewrite `application_url` to a tunnel URL — check that file befor
 committing after any dev session.
 
 > If you would rather serve the app from a custom domain, map it first
-> (`gcloud beta run domain-mappings create --service SERVICE --domain app.example.com`),
+> (`gcloud beta run domain-mappings create --service "$SERVICE" --domain app.example.com --region "$REGION"`),
 > wait for the certificate to provision, and use that hostname in both places
 > instead of the `run.app` URL. Doing it in that order avoids re-authorising the
 > app twice.
@@ -242,7 +277,7 @@ committing after any dev session.
    webhook against the new URL.
 5. Watch logs for a few hours:
    ```bash
-   gcloud run services logs tail SERVICE --region REGION
+   gcloud run services logs tail "$SERVICE" --region "$REGION"
    ```
 6. Only then scale the Render service to zero. **Keep it deployable for about a
    week** — it is the fastest rollback if something only shows up under real
@@ -251,6 +286,13 @@ committing after any dev session.
 ---
 
 ## Operational notes
+
+### Region choice
+
+Cloud Run is in `us-west1` (Oregon). Keep the Neon project in a nearby region —
+`us-west-2` on AWS is the closest match. Every request this app serves does
+Prisma queries, so cross-continent latency between the two would land directly on
+the critical path for both the embedded admin UI and the `orders/create` webhook.
 
 ### Migrations
 
@@ -285,10 +327,10 @@ catalog needs the headroom.
 
 ```bash
 # List revisions, newest first.
-gcloud run revisions list --service SERVICE --region REGION
+gcloud run revisions list --service "$SERVICE" --region "$REGION"
 
 # Send all traffic back to a known-good one.
-gcloud run services update-traffic SERVICE --region REGION \
+gcloud run services update-traffic "$SERVICE" --region "$REGION" \
   --to-revisions REVISION_NAME=100
 ```
 
@@ -299,7 +341,7 @@ restore first.
 ### Logs
 
 ```bash
-gcloud run services logs tail SERVICE --region REGION
+gcloud run services logs tail "$SERVICE" --region "$REGION"
 ```
 
 Application logs go to Cloud Logging automatically via stdout/stderr. Log volume

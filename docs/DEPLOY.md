@@ -274,7 +274,7 @@ committing after any dev session.
 
 ## 5. Cutover from Render
 
-1. Deploy to Cloud Run and confirm `/healthz` returns 200.
+1. Deploy to Cloud Run and confirm `/health` returns 200.
 2. Update `SHOPIFY_APP_URL` and `shopify.app.toml`, then `npm run deploy` (step 4).
 3. Open the app in the Shopify admin. Because the app URL changed, you will be
    taken through OAuth again — sessions live in Postgres and both hosts share the
@@ -300,6 +300,29 @@ Cloud Run is in `us-west1` (Oregon). Keep the Neon project in a nearby region �
 `us-west-2` on AWS is the closest match. Every request this app serves does
 Prisma queries, so cross-continent latency between the two would land directly on
 the critical path for both the embedded admin UI and the `orders/create` webhook.
+
+### The health endpoint is /health, not /healthz
+
+Google's frontend intercepts `/healthz` on `*.run.app` and answers it itself
+with a 404 that never reaches the container — no `x-cloud-trace-context` header,
+no request in the Cloud Run logs. It looks exactly like a broken app. Every
+other path tested (`/health`, `/healthcheck`, `/livez`, `/readyz`, `/status`,
+`/api/health`) reaches the container normally.
+
+If you ever move the probe, re-test that the new path actually reaches the app
+rather than assuming it does.
+
+### Public access is required
+
+Shopify calls this app anonymously — embedded admin loads, OAuth callbacks and
+webhooks all arrive without a Google identity — so `allUsers` must hold
+`roles/run.invoker`. Without it Cloud Run returns **404, not 403**, which is
+easy to misread as an application bug.
+
+`gcloud run deploy --allow-unauthenticated` downgrades a failure here to a
+warning and still exits 0, so the deploy workflow applies the binding as an
+explicit step and fails if it does not stick. Granting it also requires the
+`constraints/iam.allowedPolicyMemberDomains` org policy to permit `allUsers`.
 
 ### Migrations
 

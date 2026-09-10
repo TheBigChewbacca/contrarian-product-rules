@@ -120,8 +120,8 @@ printf '%s' 'postgresql://....us-west-2.aws.neon.tech/neondb?sslmode=require' \
 printf '%s' 'YOUR_SHOPIFY_API_KEY'    | gcloud secrets create cpr-shopify-api-key --data-file=-
 printf '%s' 'YOUR_SHOPIFY_API_SECRET' | gcloud secrets create cpr-shopify-api-secret --data-file=-
 
-# Set this to the Render URL for now; step 4 replaces it after the first deploy.
-printf '%s' 'https://contrarian-product-rules.onrender.com' \
+# The public origin of the app. Must match application_url in shopify.app.toml.
+printf '%s' 'https://contrarian-product-rules-198806279895.us-west1.run.app' \
   | gcloud secrets create cpr-shopify-app-url --data-file=-
 
 printf '%s' 'read_products,write_products,read_orders,write_orders,read_shipping,write_shipping,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders' \
@@ -239,8 +239,8 @@ printf '%s' 'https://contrarian-product-rules-198806279895.us-west1.run.app' \
   | gcloud secrets versions add cpr-shopify-app-url --data-file=-
 ```
 
-**b. [`shopify.app.toml`](../shopify.app.toml)** — replace all four
-`onrender.com` references:
+**b. [`shopify.app.toml`](../shopify.app.toml)** — already set to
+the Cloud Run origin. Confirm it still reads:
 
 ```toml
 application_url = "https://contrarian-product-rules-198806279895.us-west1.run.app"

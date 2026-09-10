@@ -7,7 +7,7 @@
 # would race and add cold-start latency. Migrations run once per release from
 # the deploy workflow (.github/workflows/deploy.yml) before traffic is shifted.
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 RUN apk add --no-cache openssl
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false

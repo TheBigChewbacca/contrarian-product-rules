@@ -70,7 +70,7 @@ jobs:
       # container start command, so concurrent Cloud Run instances cannot race.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install migration tooling

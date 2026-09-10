@@ -19,7 +19,15 @@ module.exports = {
     commonjs: true,
     es6: true,
   },
-  ignorePatterns: ["!**/.server", "!**/.client"],
+  // Declared here rather than in .eslintignore: the lint script passes
+  // --ignore-path .gitignore, which replaces .eslintignore entirely, whereas
+  // config ignorePatterns are always applied on top of it.
+  ignorePatterns: [
+    "!**/.server",
+    "!**/.client",
+    // Generated bundle, built outside this repo and committed as an artifact.
+    "extensions/*/assets/product-rules.js",
+  ],
 
   // Base config
   extends: ["eslint:recommended"],

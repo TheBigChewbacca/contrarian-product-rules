@@ -37,4 +37,5 @@ model Session {
 model ShopSettings {
   shop                     String  @id
   pickupShippingProfileId  String?
+  preorderCollectionId     String?
 }

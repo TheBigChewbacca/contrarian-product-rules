@@ -96,6 +96,64 @@ export async function savePickupShippingProfile(
   });
 }
 
+export async function loadPreorderCollectionId(shop: string): Promise<string> {
+  const settings = await prisma.shopSettings.findUnique({ where: { shop } });
+  return settings?.preorderCollectionId ?? "";
+}
+
+export async function savePreorderCollectionId(
+  shop: string,
+  collectionId: string,
+): Promise<void> {
+  await prisma.shopSettings.upsert({
+    where: { shop },
+    create: { shop, preorderCollectionId: collectionId || null },
+    update: { preorderCollectionId: collectionId || null },
+  });
+}
+
+export type PreorderCollection = { id: string; title: string };
+
+export async function loadCollections(
+  admin: AdminApiContext,
+): Promise<PreorderCollection[]> {
+  const collections: PreorderCollection[] = [];
+  let after: string | undefined;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+        query ProductRulesCollections($after: String) {
+          collections(first: 100, after: $after, sortKey: TITLE) {
+            nodes { id title }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+      { variables: { after } },
+    );
+    const result = (await response.json()) as {
+      data?: { collections?: {
+        nodes: PreorderCollection[];
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      } };
+      errors?: GraphQLError[];
+    };
+    const errors = graphQLErrors(result);
+    if (errors.length > 0) {
+      console.error("Unable to load Shopify collections", { errors });
+      return collections;
+    }
+
+    const page = result.data?.collections;
+    collections.push(...(page?.nodes ?? []));
+    hasNextPage = page?.pageInfo.hasNextPage ?? false;
+    after = page?.pageInfo.endCursor ?? undefined;
+  }
+
+  return collections;
+}
+
 export async function loadProductRuleSummaries(
   admin: AdminApiContext,
   search = "",
@@ -281,13 +339,17 @@ export function resolveProductRules(product: ProductRuleProduct): {
   };
 }
 
-const PREORDER_COLLECTION_ID = "gid://shopify/Collection/481852457263";
-
+// The preorder collection is configured per shop (ShopSettings.preorderCollectionId).
+// An empty ID means the merchant has not opted into collection sync, which is a
+// valid state, not an error — the preorder rule itself still saves.
 export async function syncPreorderCollection(
   admin: AdminApiContext,
   productId: string,
   enabled: boolean,
+  collectionId: string,
 ): Promise<GraphQLUserError[]> {
+  if (!collectionId) return [];
+
   const collectionResponse = await admin.graphql(
     `#graphql
       query PreorderCollectionProducts($id: ID!) {
@@ -297,7 +359,7 @@ export async function syncPreorderCollection(
           }
         }
       }`,
-    { variables: { id: PREORDER_COLLECTION_ID } },
+    { variables: { id: collectionId } },
   );
   const collectionResult = (await collectionResponse.json()) as {
     data?: { collection?: { products: { nodes: Array<{ id: string }> } } | null };
@@ -306,7 +368,10 @@ export async function syncPreorderCollection(
   const collectionErrors = graphQLErrors(collectionResult);
   if (collectionErrors.length > 0) return collectionErrors;
   if (!collectionResult.data?.collection) {
-    return [{ message: "The configured preorder collection could not be found." }];
+    return [{
+      message:
+        "The configured preorder collection no longer exists. Pick a different collection on the Preorder page, or clear the setting to turn off collection sync.",
+    }];
   }
 
   const isMember = collectionResult.data.collection.products.nodes.some(
@@ -322,7 +387,7 @@ export async function syncPreorderCollection(
           userErrors { field message }
         }
       }`,
-    { variables: { id: PREORDER_COLLECTION_ID, productIds: [productId] } },
+    { variables: { id: collectionId, productIds: [productId] } },
   );
   const result = (await response.json()) as {
     data?: Record<string, { userErrors: GraphQLUserError[] }>;
@@ -401,14 +466,16 @@ export async function saveProductRules(
     ...(result.data?.metafieldsSet?.userErrors ?? []),
   ];
 
-  console.log("Product rules metafield save result", {
-    productId,
-    expectedNamespace: NAMESPACE,
-    expectedKey: KEY,
-    submittedRules: rules,
-    savedMetafields: result.data?.metafieldsSet?.metafields ?? [],
-    errors,
-  });
+  // Only failures are logged. Logging the full rule payload on every save was
+  // pure noise in Cloud Logging, and log volume is billed.
+  if (errors.length > 0) {
+    console.error("Product rules metafield save failed", {
+      productId,
+      namespace: NAMESPACE,
+      key: KEY,
+      errors,
+    });
+  }
 
   if (
     errors.length === 0 &&

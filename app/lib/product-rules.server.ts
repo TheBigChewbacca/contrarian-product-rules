@@ -222,19 +222,45 @@ export async function loadProduct(
 export async function loadDeliveryProfiles(
   admin: AdminApiContext,
 ): Promise<DeliveryProfile[]> {
+  // Delivery profiles are the current Admin GraphQL model; this intentionally
+  // does not use legacy shipping_zones or carrier_services APIs. Merchant-owned
+  // profiles can still be restricted on market-driven stores, so callers must
+  // treat an empty result as unavailable rather than as proof that no profile exists.
+  // TODO: Confirm whether this merchant needs an app-owned delivery profile or
+  // manual migration in Shopify admin before enabling profile writes.
   try {
-    const response = await admin.graphql(
-      `#graphql
-        query ProductRulesDeliveryProfiles {
-          deliveryProfiles(first: 50) {
-            nodes { id name default }
-          }
-        }`,
-    );
-    const result = (await response.json()) as {
-      data?: { deliveryProfiles?: { nodes: DeliveryProfile[] } };
-    };
-    return result.data?.deliveryProfiles?.nodes ?? [];
+    const profiles: DeliveryProfile[] = [];
+    let after: string | undefined;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const response = await admin.graphql(
+        `#graphql
+          query ProductRulesDeliveryProfiles($after: String) {
+            deliveryProfiles(first: 50, after: $after) {
+              nodes { id name default }
+              pageInfo { hasNextPage endCursor }
+            }
+          }`,
+        { variables: { after } },
+      );
+      const result = (await response.json()) as {
+        data?: { deliveryProfiles?: {
+          nodes: DeliveryProfile[];
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        } };
+        errors?: GraphQLError[];
+      };
+      const errors = graphQLErrors(result);
+      if (errors.length > 0) throw new Error(errors.map((error) => error.message).join("; "));
+
+      const page = result.data?.deliveryProfiles;
+      profiles.push(...(page?.nodes ?? []));
+      hasNextPage = page?.pageInfo.hasNextPage ?? false;
+      after = page?.pageInfo.endCursor ?? undefined;
+    }
+
+    return profiles;
   } catch (error) {
     console.error("Unable to load Shopify delivery profiles", {
       error: error instanceof Error ? error.message : error,
@@ -409,6 +435,12 @@ export async function assignProductToDeliveryProfile(
     return [{ message: "The selected product has no variants." }];
   }
 
+  // Compliance note: deliveryProfileUpdate is the supported delivery-profile
+  // mutation for variant association. It preserves the merchant's existing
+  // profile zones and rates; it does not recreate legacy shipping rates.
+  // On market-driven stores Shopify may reject writes to merchant-owned
+  // profiles. In that case the merchant must migrate this rule to an app-owned
+  // profile or configure the equivalent rule manually in Shopify admin.
   try {
     return await withShippingRetry(async () => {
       const response = await admin.graphql(
@@ -445,6 +477,9 @@ export async function removeProductFromDeliveryProfile(
 ): Promise<GraphQLUserError[]> {
   if (!profileId || variantIds.length === 0) return [];
 
+  // Compliance note: dissociation remains a delivery-profile operation and
+  // avoids deprecated shipping-zone or carrier-service endpoints. The selected
+  // profile's existing delivery zones, locations, and rates remain untouched.
   try {
     return await withShippingRetry(async () => {
       const response = await admin.graphql(
@@ -505,7 +540,11 @@ export async function syncProductPickupProfile(
   return errors.filter((error) => error.message);
 }
 
-export type DeliveryProfileAssignment = { productId: string; title: string };
+export type DeliveryProfileAssignment = {
+  productId: string;
+  title: string;
+  variantIds: string[];
+};
 
 export async function loadDeliveryProfileProductAssignments(
   admin: AdminApiContext,
@@ -516,18 +555,21 @@ export async function loadDeliveryProfileProductAssignments(
   let after: string | undefined;
   let hasNextPage = true;
 
-  // NOTE: verify `profileItems` is the correct connection name/shape for
-  // DeliveryProfile in the API version this app targets (see
-  // shopify.app.toml) before relying on this in production. Nothing else in
-  // this file reads assignments back out of a profile — everything else only
-  // writes to one via variantsToAssociate/variantsToDissociate.
+  // DeliveryProfile.profileItems is used instead of legacy shipping zones.
+  // Variant-level membership matters because a product can be partially
+  // associated with a profile; product-level membership alone is inaccurate.
+  // TODO: Confirm whether each configured profile covers all fulfillment
+  // locations required by the merchant before applying this product rule.
   while (hasNextPage) {
     const response = await admin.graphql(
       `#graphql
         query DeliveryProfileAssignments($id: ID!, $after: String) {
           deliveryProfile(id: $id) {
             profileItems(first: 100, after: $after) {
-              nodes { product { id title } }
+              nodes {
+                product { id title }
+                variants(first: 250) { nodes { id } }
+              }
               pageInfo { hasNextPage endCursor }
             }
           }
@@ -538,7 +580,10 @@ export async function loadDeliveryProfileProductAssignments(
       data?: {
         deliveryProfile?: {
           profileItems?: {
-            nodes: Array<{ product: { id: string; title: string } | null }>;
+            nodes: Array<{
+              product: { id: string; title: string } | null;
+              variants: { nodes: Array<{ id: string }> };
+            }>;
             pageInfo: { hasNextPage: boolean; endCursor: string | null };
           };
         };
@@ -546,7 +591,13 @@ export async function loadDeliveryProfileProductAssignments(
     };
     const items = result.data?.deliveryProfile?.profileItems;
     for (const node of items?.nodes ?? []) {
-      if (node.product) assignments.push({ productId: node.product.id, title: node.product.title });
+      if (node.product) {
+        assignments.push({
+          productId: node.product.id,
+          title: node.product.title,
+          variantIds: node.variants.nodes.map((variant) => variant.id),
+        });
+      }
     }
     hasNextPage = items?.pageInfo.hasNextPage ?? false;
     after = items?.pageInfo.endCursor ?? undefined;
@@ -572,13 +623,19 @@ export async function auditPickupDeliveryProfile(
     loadDeliveryProfileProductAssignments(admin, pickupProfileId),
   ]);
 
-  const assignedIds = new Set(assignments.map((assignment) => assignment.productId));
+  const assignedVariantIds = new Set(
+    assignments.flatMap((assignment) => assignment.variantIds),
+  );
   const mismatches: PickupProfileMismatch[] = [];
 
   for (const product of products) {
     const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
     const shouldBeAssigned = rules.pickup_only.enabled;
-    const isAssigned = assignedIds.has(product.id);
+    const assignedVariantCount = product.variantIds.filter((variantId) =>
+      assignedVariantIds.has(variantId),
+    ).length;
+    const isAssigned = assignedVariantCount === product.variantIds.length;
+    const hasAnyAssignedVariant = assignedVariantCount > 0;
 
     if (shouldBeAssigned && !isAssigned) {
       mismatches.push({
@@ -587,7 +644,7 @@ export async function auditPickupDeliveryProfile(
         title: product.title,
         variantIds: product.variantIds,
       });
-    } else if (!shouldBeAssigned && isAssigned) {
+    } else if (!shouldBeAssigned && hasAnyAssignedVariant) {
       mismatches.push({
         type: "unexpected_in_pickup",
         productId: product.id,

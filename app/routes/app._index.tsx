@@ -7,24 +7,24 @@ import {
   createDefaultPreorderRule,
   isRuleActive,
   normalizeProductRules,
-  paginateOffset,
   type ProductRulesV1,
 } from "../lib/product-rules";
 import {
   auditPickupDeliveryProfile,
   fixPickupDeliveryProfileMismatches,
   loadProduct,
-  loadAllProductRuleSummaries,
   loadDeliveryProfiles,
   loadEnabledPickupVariantIds,
   loadPickupShippingProfile,
   loadProductRuleSummaries,
+  productRuleTag,
   reassignPickupProfileVariants,
   resolveDefaultDeliveryProfileId,
   resolveProductRules,
   savePickupShippingProfile,
   saveProductRules,
   syncProductPickupProfile,
+  backfillProductRuleTags,
   type GraphQLUserError,
   type PickupProfileMismatch,
 } from "../lib/product-rules.server";
@@ -39,16 +39,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const activeOnly = url.searchParams.get("active") === "true";
   const ruleKey = rule === "preorder" ? "preorder" : "pickup_only";
 
+  // "Show only active" filters with a native Shopify tag: query instead of
+  // paging the whole catalog into memory (see syncProductRuleTags).
+  const shopifySearch = activeOnly
+    ? [search, `tag:'${productRuleTag(ruleKey)}'`].filter(Boolean).join(" ")
+    : search;
+
   const [productsPage, deliveryProfiles, pickupShippingProfileId] = await Promise.all([
-    activeOnly
-      ? loadAllProductRuleSummaries(admin, search).then((all) => {
-          const filtered = all.filter((product) =>
-            isRuleActive(normalizeProductRules(product.rulesValue, product.legacyPickupOnly), ruleKey),
-          );
-          const { items, pageInfo } = paginateOffset(filtered, cursor);
-          return { products: items, pageInfo };
-        })
-      : loadProductRuleSummaries(admin, search, cursor),
+    loadProductRuleSummaries(admin, shopifySearch, cursor),
     loadDeliveryProfiles(admin),
     loadPickupShippingProfile(session.shop),
   ]);
@@ -106,6 +104,13 @@ if (actionType === "profile") {
         };
   }
 
+  if (actionType === "syncTags") {
+    const { synced, errors } = await backfillProductRuleTags(admin);
+    return errors.length > 0
+      ? { ok: false, message: errors.map((error) => error.message).join(" ") }
+      : { ok: true, tagSyncMessage: `Synced tags for ${synced} product${synced === 1 ? "" : "s"}.` };
+  }
+
   const productId = String(formData.get("productId") || "");
   const rule = formData.get("rule") === "preorder" ? "preorder" : "pickup";
 
@@ -141,6 +146,7 @@ export default function Index() {
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const auditFetcher = useFetcher<typeof action>();
+  const tagSyncFetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState(search);
   const activeRule = rule === "preorder" ? "preorder" : "pickup";
@@ -206,6 +212,15 @@ export default function Index() {
             <input type="checkbox" checked={activeOnly} onChange={(event) => toggleActiveOnly(event.target.checked)} />
             Show only active
           </label>
+          <button
+            type="button"
+            className="edit-button"
+            disabled={tagSyncFetcher.state !== "idle"}
+            title="Repairs the tags 'Show only active' filters on, for products enabled before this feature or via the legacy pickup metafield."
+            onClick={() => tagSyncFetcher.submit({ action: "syncTags" }, { method: "post" })}
+          >
+            {tagSyncFetcher.state !== "idle" ? "Syncing tags…" : "Sync tags"}
+          </button>
           <div className="rule-actions">
             {activeRule === "pickup" && (
               <>
@@ -250,6 +265,16 @@ export default function Index() {
                 </button>
               </>
             )}
+          </s-banner>
+        )}
+        {tagSyncFetcher.data && "tagSyncMessage" in tagSyncFetcher.data && (
+          <s-banner tone="success">
+            <p>{tagSyncFetcher.data.tagSyncMessage}</p>
+          </s-banner>
+        )}
+        {tagSyncFetcher.data?.ok === false && (
+          <s-banner tone="critical">
+            <p>{tagSyncFetcher.data.message}</p>
           </s-banner>
         )}
         <p className="rule-count">

@@ -9,6 +9,17 @@ import {
 const NAMESPACE = "contrarian_product_rules";
 const KEY = "rules";
 
+// Mirrors each rule's enabled state onto a product tag so the dashboard can
+// filter with a native Shopify `tag:` search instead of paging the whole
+// catalog into memory. The metafield stays the source of truth; tags are a
+// best-effort index kept in sync on save and repairable via backfillProductRuleTags.
+export const PICKUP_ONLY_TAG = "cpr-pickup-only";
+export const PREORDER_TAG = "cpr-preorder";
+
+export function productRuleTag(ruleKey: "pickup_only" | "preorder"): string {
+  return ruleKey === "preorder" ? PREORDER_TAG : PICKUP_ONLY_TAG;
+}
+
 export type GraphQLUserError = { field?: string[]; message: string };
 type GraphQLError = { message: string };
 const SHIPPING_RETRY_DELAYS_MS = [250, 750];
@@ -66,6 +77,7 @@ export type ProductRuleProduct = {
   variantIds: string[];
   rulesValue: unknown;
   legacyPickupOnly: boolean;
+  tags: string[];
 };
 
 export type DeliveryProfile = { id: string; name: string; default: boolean };
@@ -73,7 +85,7 @@ export type DeliveryProfile = { id: string; name: string; default: boolean };
 export type ProductRuleSummary = Pick<
   ProductRuleProduct,
   "id" | "title" | "featuredImage" | "rulesValue" | "legacyPickupOnly"
-> & { variantIds: string[] };
+> & { variantIds: string[]; tags: string[] };
 
 export type ProductRulePageInfo = {
   hasNextPage: boolean;
@@ -166,6 +178,7 @@ export async function loadProductRuleSummaries(
           nodes {
             id
             title
+            tags
             featuredImage { url altText }
             variants(first: 100) { nodes { id } }
             rulesMetafield: metafield(namespace: "${NAMESPACE}", key: "${KEY}") {
@@ -179,7 +192,7 @@ export async function loadProductRuleSummaries(
           pageInfo { hasNextPage endCursor }
         }
       }`,
-    { variables: { query: search.trim() || undefined, after: after || undefined } },
+    { variables: { query: search.trim() || undefined, after: after || undefined }, tries: 3 },
   );
   const result = (await response.json()) as {
     data?: {
@@ -187,6 +200,7 @@ export async function loadProductRuleSummaries(
         nodes: Array<{
           id: string;
           title: string;
+          tags: string[];
           featuredImage: { url: string; altText: string | null } | null;
           variants: { nodes: Array<{ id: string }> };
           rulesMetafield: { jsonValue: unknown; value: string } | null;
@@ -200,6 +214,7 @@ export async function loadProductRuleSummaries(
   const products = (result.data?.products?.nodes ?? []).map((product) => ({
       id: product.id,
       title: product.title,
+      tags: product.tags,
       featuredImage: product.featuredImage,
       variantIds: product.variants.nodes.map((variant) => variant.id),
       rulesValue: product.rulesMetafield?.jsonValue ?? product.rulesMetafield?.value,
@@ -239,6 +254,7 @@ export async function loadProduct(
         product(id: $id) {
           id
           title
+          tags
           featuredImage { url altText }
           variants(first: 100) { nodes { id } }
           rulesMetafield: metafield(namespace: "${NAMESPACE}", key: "${KEY}") {
@@ -257,6 +273,7 @@ export async function loadProduct(
       product: {
         id: string;
         title: string;
+        tags: string[];
         featuredImage: { url: string; altText: string | null } | null;
         variants: { nodes: Array<{ id: string }> };
         rulesMetafield: { jsonValue: unknown; value: string } | null;
@@ -270,6 +287,7 @@ export async function loadProduct(
   return {
     id: product.id,
     title: product.title,
+    tags: product.tags,
     featuredImage: product.featuredImage,
     variantIds: product.variants.nodes.map((variant) => variant.id),
     rulesValue:
@@ -490,7 +508,100 @@ export async function saveProductRules(
     ];
   }
 
+  if (errors.length === 0) {
+    // Best-effort: the metafield write already succeeded and is the source
+    // of truth, so a tag sync failure here is logged rather than surfaced as
+    // a save failure. backfillProductRuleTags can repair drift later.
+    await syncProductRuleTags(admin, productId, rules).catch((error) => {
+      console.error("Product rule tag sync failed", { productId, error });
+    });
+  }
+
   return errors;
+}
+
+// Adds/removes the tag mirroring each rule's enabled state. Idempotent, so
+// it's safe to call on every save regardless of the product's current tags.
+export async function syncProductRuleTags(
+  admin: AdminApiContext,
+  productId: string,
+  rules: ProductRulesV1,
+): Promise<GraphQLUserError[]> {
+  const tagsToAdd: string[] = [];
+  const tagsToRemove: string[] = [];
+  (rules.pickup_only.enabled ? tagsToAdd : tagsToRemove).push(PICKUP_ONLY_TAG);
+  (rules.preorder?.enabled ? tagsToAdd : tagsToRemove).push(PREORDER_TAG);
+
+  const errors: GraphQLUserError[] = [];
+
+  if (tagsToAdd.length > 0) {
+    const response = await admin.graphql(
+      `#graphql
+        mutation ProductRuleTagsAdd($id: ID!, $tags: [String!]!) {
+          tagsAdd(id: $id, tags: $tags) {
+            userErrors { field message }
+          }
+        }`,
+      { variables: { id: productId, tags: tagsToAdd }, tries: 3 },
+    );
+    const result = (await response.json()) as {
+      data?: { tagsAdd?: { userErrors: GraphQLUserError[] } };
+      errors?: GraphQLError[];
+    };
+    errors.push(...graphQLErrors(result), ...(result.data?.tagsAdd?.userErrors ?? []));
+  }
+
+  if (tagsToRemove.length > 0) {
+    const response = await admin.graphql(
+      `#graphql
+        mutation ProductRuleTagsRemove($id: ID!, $tags: [String!]!) {
+          tagsRemove(id: $id, tags: $tags) {
+            userErrors { field message }
+          }
+        }`,
+      { variables: { id: productId, tags: tagsToRemove }, tries: 3 },
+    );
+    const result = (await response.json()) as {
+      data?: { tagsRemove?: { userErrors: GraphQLUserError[] } };
+      errors?: GraphQLError[];
+    };
+    errors.push(...graphQLErrors(result), ...(result.data?.tagsRemove?.userErrors ?? []));
+  }
+
+  return errors;
+}
+
+// One-time/on-demand repair for products whose tags don't reflect their
+// current rule state yet (tagged products created before this sync existed,
+// or products whose only rule signal is the legacy metafield). Scans the
+// full catalog once, so this is meant to be triggered explicitly rather than
+// run on every page load.
+export async function backfillProductRuleTags(
+  admin: AdminApiContext,
+): Promise<{ synced: number; errors: GraphQLUserError[] }> {
+  const products = await loadAllProductRuleSummaries(admin);
+  const errors: GraphQLUserError[] = [];
+  let synced = 0;
+
+  for (const product of products) {
+    const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
+    const tagSet = new Set(product.tags);
+    const wantsPickupTag = rules.pickup_only.enabled;
+    const wantsPreorderTag = rules.preorder?.enabled === true;
+    const hasCorrectTags =
+      tagSet.has(PICKUP_ONLY_TAG) === wantsPickupTag &&
+      tagSet.has(PREORDER_TAG) === wantsPreorderTag;
+    if (hasCorrectTags) continue;
+
+    const productErrors = await syncProductRuleTags(admin, product.id, rules);
+    if (productErrors.length > 0) {
+      errors.push(...productErrors);
+    } else {
+      synced += 1;
+    }
+  }
+
+  return { synced, errors };
 }
 
 export async function assignProductToDeliveryProfile(

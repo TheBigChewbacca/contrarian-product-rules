@@ -5,11 +5,11 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
-  loadAllProductRuleSummaries,
   loadCollections,
   loadPreorderCollectionId,
   loadProduct,
   loadProductRuleSummaries,
+  productRuleTag,
   resolveProductRules,
   saveProductRules,
   savePreorderCollectionId,
@@ -20,9 +20,7 @@ import {
   DEFAULT_PREORDER_BADGE,
   DEFAULT_PREORDER_MESSAGE,
   createDefaultPreorderRule,
-  isRuleActive,
   normalizeProductRules,
-  paginateOffset,
   type PreorderRule,
 } from "../lib/product-rules";
 import "../styles/rule-dashboard.css";
@@ -49,15 +47,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           pageInfo: { hasNextPage: false, endCursor: null },
         };
       }
-      if (activeOnly) {
-        const all = await loadAllProductRuleSummaries(admin, search);
-        const filtered = all.filter((product) =>
-          isRuleActive(normalizeProductRules(product.rulesValue, product.legacyPickupOnly), "preorder"),
-        );
-        const { items, pageInfo } = paginateOffset(filtered, cursor);
-        return { products: items, pageInfo };
-      }
-      return loadProductRuleSummaries(admin, search, cursor);
+      // "Show only active" filters with a native Shopify tag: query instead
+      // of paging the whole catalog into memory (see syncProductRuleTags).
+      const shopifySearch = activeOnly
+        ? [search, `tag:'${productRuleTag("preorder")}'`].filter(Boolean).join(" ")
+        : search;
+      return loadProductRuleSummaries(admin, shopifySearch, cursor);
     })(),
     loadCollections(admin),
     loadPreorderCollectionId(session.shop),

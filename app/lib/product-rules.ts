@@ -192,3 +192,26 @@ export function normalizeProductRules(
   defaults.pickup_only.enabled = legacyPickupOnly;
   return defaults;
 }
+
+export function isRuleActive(rules: ProductRulesV1, rule: "pickup_only" | "preorder"): boolean {
+  return rule === "preorder" ? rules.preorder?.enabled === true : rules.pickup_only.enabled;
+}
+
+export type OffsetPageInfo = { hasNextPage: boolean; endCursor: string | null };
+
+// Paginates an already-fetched, in-memory array with the same {items, pageInfo}
+// shape Shopify's GraphQL cursors use, so admin list pages can page through a
+// filtered result (e.g. "active only") without special-casing their UI.
+export function paginateOffset<T>(
+  items: T[],
+  after: string | undefined,
+  pageSize = 50,
+): { items: T[]; pageInfo: OffsetPageInfo } {
+  const offset = after ? Math.max(0, Number(after) || 0) : 0;
+  const nextOffset = offset + pageSize;
+  const hasNextPage = nextOffset < items.length;
+  return {
+    items: items.slice(offset, nextOffset),
+    pageInfo: { hasNextPage, endCursor: hasNextPage ? String(nextOffset) : null },
+  };
+}

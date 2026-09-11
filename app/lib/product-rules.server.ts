@@ -213,13 +213,14 @@ export async function loadProductRuleSummaries(
 
 export async function loadAllProductRuleSummaries(
   admin: AdminApiContext,
+  search = "",
 ): Promise<ProductRuleSummary[]> {
   const products: ProductRuleSummary[] = [];
   let after: string | undefined;
   let pageInfo: ProductRulePageInfo = { hasNextPage: true, endCursor: null };
 
   while (pageInfo.hasNextPage) {
-    const page = await loadProductRuleSummaries(admin, "", after);
+    const page = await loadProductRuleSummaries(admin, search, after);
     products.push(...page.products);
     pageInfo = page.pageInfo;
     after = pageInfo.endCursor ?? undefined;

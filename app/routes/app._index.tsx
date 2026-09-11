@@ -5,13 +5,16 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import {
   createDefaultPreorderRule,
+  isRuleActive,
   normalizeProductRules,
+  paginateOffset,
   type ProductRulesV1,
 } from "../lib/product-rules";
 import {
   auditPickupDeliveryProfile,
   fixPickupDeliveryProfileMismatches,
   loadProduct,
+  loadAllProductRuleSummaries,
   loadDeliveryProfiles,
   loadEnabledPickupVariantIds,
   loadPickupShippingProfile,
@@ -33,12 +36,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const rule = url.searchParams.get("rule") === "preorder" ? "preorder" : "pickup";
   const search = url.searchParams.get("search") ?? "";
   const cursor = url.searchParams.get("cursor") || undefined;
-  const [products, deliveryProfiles, pickupShippingProfileId] = await Promise.all([
-    loadProductRuleSummaries(admin, search, cursor),
+  const activeOnly = url.searchParams.get("active") === "true";
+  const ruleKey = rule === "preorder" ? "preorder" : "pickup_only";
+
+  const [productsPage, deliveryProfiles, pickupShippingProfileId] = await Promise.all([
+    activeOnly
+      ? loadAllProductRuleSummaries(admin, search).then((all) => {
+          const filtered = all.filter((product) =>
+            isRuleActive(normalizeProductRules(product.rulesValue, product.legacyPickupOnly), ruleKey),
+          );
+          const { items, pageInfo } = paginateOffset(filtered, cursor);
+          return { products: items, pageInfo };
+        })
+      : loadProductRuleSummaries(admin, search, cursor),
     loadDeliveryProfiles(admin),
     loadPickupShippingProfile(session.shop),
   ]);
-  return { ...products, deliveryProfiles, pickupShippingProfileId, rule, search, cursor };
+  return { ...productsPage, deliveryProfiles, pickupShippingProfileId, rule, search, cursor, activeOnly };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -123,7 +137,7 @@ if (actionType === "profile") {
 };
 
 export default function Index() {
-  const { products, pageInfo, deliveryProfiles, pickupShippingProfileId, rule, search } = useLoaderData<typeof loader>();
+  const { products, pageInfo, deliveryProfiles, pickupShippingProfileId, rule, search, activeOnly } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const auditFetcher = useFetcher<typeof action>();
@@ -134,6 +148,15 @@ export default function Index() {
   const changeRule = (nextRule: "pickup" | "preorder") => {
     const next = new URLSearchParams(searchParams);
     next.set("rule", nextRule);
+    next.delete("cursor");
+    setSearchParams(next);
+  };
+
+  const toggleActiveOnly = (checked: boolean) => {
+    const next = new URLSearchParams(searchParams);
+    if (checked) next.set("active", "true");
+    else next.delete("active");
+    next.delete("cursor");
     setSearchParams(next);
   };
 
@@ -159,12 +182,9 @@ export default function Index() {
     setSearchParams(next);
   };
 
-  const isEnabled = (product: (typeof products)[number]) => {
-    const rules = normalizeProductRules(product.rulesValue, product.legacyPickupOnly);
-    return activeRule === "preorder"
-      ? rules.preorder?.enabled === true
-      : rules.pickup_only.enabled;
-  };
+  const ruleKey = activeRule === "preorder" ? "preorder" : "pickup_only";
+  const isEnabled = (product: (typeof products)[number]) =>
+    isRuleActive(normalizeProductRules(product.rulesValue, product.legacyPickupOnly), ruleKey);
 
   const mismatches = auditFetcher.data?.mismatches ?? [];
 
@@ -182,6 +202,10 @@ export default function Index() {
             <input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder="Search product title" aria-label="Search product title" />
             <button type="submit">Search</button>
           </form>
+          <label className="rule-active-filter">
+            <input type="checkbox" checked={activeOnly} onChange={(event) => toggleActiveOnly(event.target.checked)} />
+            Show only active
+          </label>
           <div className="rule-actions">
             {activeRule === "pickup" && (
               <>
@@ -228,7 +252,9 @@ export default function Index() {
             )}
           </s-banner>
         )}
-        <p className="rule-count">Showing {products.length} products</p>
+        <p className="rule-count">
+          Showing {products.length} {activeOnly ? "active " : ""}product{products.length === 1 ? "" : "s"}
+        </p>
         <div className="rule-table-wrap">
           <table className="rule-table">
             <thead><tr><th scope="col">Product title</th>{activeRule === "preorder" && <th scope="col">Release date</th>}<th scope="col">Rule</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>

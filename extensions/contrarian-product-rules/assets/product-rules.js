@@ -1,1 +1,91 @@
-(function(){"use strict";const P='.shopify-payment-button button, .shopify-payment-button [role="button"]';let w=null;function C(n){return(n+"").toLowerCase()==="true"}function x(n,t){return new Intl.DateTimeFormat("en-US",{timeZone:t||"UTC",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(new Date(n)).reduce(function(o,i){return i.type!=="literal"&&(o[i.type]=Number(i.value)),o},{})}function k(){const n=["product-form",'form[action*="/cart/add"]','[data-type="add-to-cart-form"]',".product-form",".product__info-container",".product__info-wrapper",".product__info",".product-info",".product-single__meta",".product-single__information","[data-product-info]","[data-product-root]"];for(const o of n){const i=document.querySelector(o);if(i)return i}const t=document.querySelector('button[name="add"], .product-form__submit, button[type="submit"]');return t?t.closest("form")||t.parentElement||t:null}function _(n){const t='button.product-form__submit, button[name="add"], input[name="add"], input[type="submit"]',o=`button[name="checkout"],${P},button[type="submit"]`,i=function(c){return c.getBoundingClientRect().width>0};return Array.from(n.querySelectorAll(t)).find(i)||Array.from(n.querySelectorAll(o)).find(i)||Array.from(document.querySelectorAll(t)).find(i)||Array.from(document.querySelectorAll(o)).find(i)}function L(n,t,o,i,c){if(document.querySelector("[data-cpr-add-confirmation]"))return;const e=document.createElement("div");e.className="cpr-add-confirmation",e.dataset.cprAddConfirmation="true",e.setAttribute("role","dialog"),e.setAttribute("aria-label",c||"Item confirmation"),e.setAttribute("aria-live","polite"),e.innerHTML='<p class="cpr-add-confirmation__message"></p><div class="cpr-add-confirmation__actions"><button type="button" data-cpr-confirm>Sounds Good</button><button type="button" data-cpr-remove>Remove From Cart</button></div>',e.querySelector(".cpr-add-confirmation__message").textContent=i,e.querySelector("[data-cpr-confirm]").addEventListener("click",function(){e.remove(),o&&o.dataset.cprDynamicCheckout==="true"?(o.dataset.cprApprovedClick="true",t&&(t.dataset.cprApprovedSubmit="true"),o.click()):(t.dataset.cprApprovedSubmit="true",typeof t.requestSubmit=="function"?t.requestSubmit(o):t.submit())}),e.querySelector("[data-cpr-remove]").addEventListener("click",function(){e.remove()});const r=t;if(r){r.classList.add("cpr-confirmation-anchor"),r.insertAdjacentElement("beforeend",e);const a=function(){const d=o||r.querySelector('button[type="submit"], input[type="submit"]');if(!d)return;const y=r.getBoundingClientRect(),p=d.getBoundingClientRect(),u=y.width||p.width,s=Math.min(p.width,u);e.style.left=Math.max(0,Math.min(p.left-y.left,u-s))+"px",e.style.right="auto",e.style.width=s+"px",e.style.maxWidth=u+"px"};a(),window.addEventListener("resize",a),e.querySelector("[data-cpr-confirm]").addEventListener("click",function(){window.removeEventListener("resize",a)}),e.querySelector("[data-cpr-remove]").addEventListener("click",function(){window.removeEventListener("resize",a)})}else n.insertAdjacentElement("afterend",e);return e}function T(n,t){const o=t?"cprPreorderWatcher":"cprAddWatcher";if(n.dataset[o]==="true")return;n.dataset[o]="true";const i=t?"cprPreorderMessage":"cprPickupMessage",c=t?"Preorder item confirmation":void 0;document.addEventListener("click",function(e){if(!t&&n.dataset.cprPreorderEnabled==="true")return;const r=e.target instanceof Element?e.target.closest('button[type="submit"], input[type="submit"], button[name="add"], button[name="checkout"], .shopify-payment-button button, .shopify-payment-button [role="button"]'):null;if(!r)return;const a=r.matches(P),d=r.form||r.closest("form")||document.querySelector('form[action*="/cart/add"]');if(d&&(d.action.includes("/cart/add")||a)){if(r.dataset.cprApprovedClick==="true"||t&&r.dataset.cprPreorderApproved==="true")return delete r.dataset.cprApprovedClick,void delete r.dataset.cprPreorderApproved;if(d.dataset.cprApprovedSubmit==="true"||t&&d.dataset.cprPreorderApproved==="true")return delete d.dataset.cprApprovedSubmit,void delete d.dataset.cprPreorderApproved;a&&(r.dataset.cprDynamicCheckout="true",r.dataset.cprPreorderDynamicCheckout="true"),e.preventDefault(),e.stopImmediatePropagation(),L(n,d,r,n.dataset[i],c)}},1),document.addEventListener("submit",function(e){if(!t&&n.dataset.cprPreorderEnabled==="true"||!(e.target instanceof HTMLFormElement&&e.target.action.includes("/cart/add")))return;const r=e.target;if(r.dataset.cprApprovedSubmit==="true"||t&&r.dataset.cprPreorderApproved==="true")return delete r.dataset.cprApprovedSubmit,void delete r.dataset.cprPreorderApproved;e.preventDefault(),L(n,r,e.submitter,n.dataset[i],c)},1)}function A(){const n=document.querySelector("[data-cpr-app]");if(!n)return;let t;w&&(window.clearInterval(w),w=null),document.querySelectorAll("[data-cpr-pickup-notice]").forEach(function(c){c.remove()}),document.querySelectorAll("[data-cpr-add-confirmation]").forEach(function(c){c.remove()}),document.querySelectorAll(".cpr-confirmation-anchor").forEach(function(c){c.classList.remove("cpr-confirmation-anchor")}),document.documentElement.classList.remove("cpr-has-pickup-only-rule");try{t=(function(c){if(!c)return null;let e=null;if(c.dataset.cprRules)try{e=JSON.parse(c.dataset.cprRules)}catch{}return{isProductPage:C(c.dataset.cprProductPage),rules:e,legacyPickupOnly:C(c.dataset.cprLegacyPickupOnly)}})(n)}catch{return}const o=t.rules&&t.rules.version===1&&t.rules.pickup_only&&typeof t.rules.pickup_only.enabled=="boolean"?t.rules.pickup_only:t.legacyPickupOnly?{enabled:1,message:"This item is available for in-store pickup only."}:{enabled:0,message:""};if(n.dataset.cprPickupMessage=typeof o.message=="string"&&o.message?o.message:"This item is available for in-store pickup only.",!t.isProductPage)return;const i=t.rules&&t.rules.version===1&&t.rules.preorder&&t.rules.preorder.enabled==1?t.rules.preorder:null;n.dataset.cprPreorderEnabled=i?"true":"false",n.dataset.cprPreorderMessage=i?`${o.enabled?`${o.message||"This item is available for in-store pickup only."} `:""}This preorder item will be released on ${i.releaseDate||"the preorder release date"}. Please confirm that you want to continue.`:"",document.documentElement.classList.toggle("cpr-has-preorder-rule",!!i),(function(c,e,r){if(!e||e.enabled!=1)return;const a=document.createElement("div");a.className="cpr-preorder",a.dataset.cprPreorder="true",a.setAttribute("role","status"),a.setAttribute("aria-live","polite");const d=document.createElement("span");d.className="cpr-preorder__badge",d.textContent=typeof e.badgeText=="string"&&e.badgeText?e.badgeText:"Preorder",a.appendChild(d);const y=document.createElement("p");y.className="cpr-preorder__message",y.textContent=typeof e.message=="string"?e.message:"",a.appendChild(y);const p=e.showCountdown==1?(function(s,b){const l=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s);if(!l)return null;const m=Number(l[1]),h=Number(l[2]),f=Number(l[3]);let v=Date.UTC(m,h-1,f);for(let E=0;E<2;E+=1){const g=x(v,b),S=Date.UTC(g.year,g.month-1,g.day,g.hour,g.minute,g.second)-v;v=Date.UTC(m,h-1,f)-S}return v})(e.releaseDate,r):null;if(p!==null){const s=document.createElement("p");s.className="cpr-preorder__countdown";const b=new Intl.DateTimeFormat(void 0,{timeZone:r||"UTC",dateStyle:"medium"}).format(new Date(p)),l=function(){const m=p-Date.now();s.textContent=m>0?`Available on ${b} (${(function(h){const f=Math.max(0,Math.floor(h/1e3)),v=Math.floor(f/86400),E=Math.floor(f%86400/3600),g=Math.floor(f%3600/60),S=f%60;return`${v}d ${(E+"").padStart(2,"0")}h ${(g+"").padStart(2,"0")}m ${(S+"").padStart(2,"0")}s`})(m)})`:"Available now",m<=0&&w&&(window.clearInterval(w),w=null)};l(),p>Date.now()&&(w=window.setInterval(l,1e3)),a.appendChild(s)}const u=k();if(u){u.insertAdjacentElement("afterbegin",a);const s=function(){const b=_(u);if(!b)return 0;const l=u.getBoundingClientRect(),m=b.getBoundingClientRect(),h=l.width||m.width,f=Math.min(m.width,h),v=Math.max(0,Math.min(m.left-l.left,h-f));return a.style.setProperty("width",f+"px","important"),a.style.setProperty("margin-left",v+"px","important"),a.style.setProperty("max-width",h+"px","important"),1};s(),window.setTimeout(s,0),window.setTimeout(s,250),window.setTimeout(s,1e3),window.setTimeout(s,2500),window.addEventListener("resize",s),new MutationObserver(s).observe(u,{childList:1,subtree:1})}else(document.querySelector("main")||document.querySelector("[role='main']")||document.body).prepend(a)})(0,i,n.dataset.cprStoreTimezone||"UTC"),i&&T(n,1),o.enabled&&(document.documentElement.classList.add("cpr-has-pickup-only-rule"),(function(c,e){if(document.querySelector("[data-cpr-pickup-notice]"))return;const r=document.createElement("div");r.className="cpr-pickup-only-notice",r.dataset.cprPickupNotice="true",r.setAttribute("role","status"),r.setAttribute("aria-live","polite"),r.textContent=e;const a=k();if(a){a.classList.add("cpr-confirmation-anchor"),a.insertAdjacentElement("afterbegin",r);const d=function(){const y=_(a);if(!y)return 0;const p=a.getBoundingClientRect(),u=y.getBoundingClientRect(),s=p.width||u.width,b=Math.min(u.width,s),l=Math.max(0,Math.min(u.left-p.left,s-b));return r.style.setProperty("width",b+"px","important"),r.style.setProperty("margin-left",l+"px","important"),r.style.setProperty("max-width",s+"px","important"),1};d(),window.setTimeout(d,0),window.setTimeout(d,250),window.setTimeout(d,1e3),window.setTimeout(d,2500),window.addEventListener("resize",d),new MutationObserver(d).observe(a,{childList:1,subtree:1})}else c.insertAdjacentElement("afterend",r)})(n,typeof o.message=="string"&&o.message?o.message:"This item is available for in-store pickup only."),T(n,0))}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",A,{once:1}):A(),document.addEventListener("shopify:section:load",A),document.addEventListener("shopify:section:reorder",A),document.addEventListener("shopify:section:select",A)})();
+// Contrarian Product Rules storefront bootstrap.
+//
+// Referenced directly by the app embed block's schema, so Shopify's theme
+// check measures this file against the 10 KB app-block JavaScript limit.
+// Keep it small: it only reads the rules metafield and hands off to the
+// per-rule modules (product-rules-rule-*.js), loaded on demand via dynamic
+// import so their size doesn't count against that limit.
+(function () {
+  'use strict';
+
+  var moduleCache = {};
+  var preorderModule = null;
+
+  function loadModule(url) {
+    if (!moduleCache[url]) moduleCache[url] = import(url);
+    return moduleCache[url];
+  }
+
+  function parseRules(appEl) {
+    if (!appEl.dataset.cprRules) return null;
+    try {
+      return JSON.parse(appEl.dataset.cprRules);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function render() {
+    var appEl = document.querySelector('[data-cpr-app]');
+    if (!appEl) return;
+
+    document.querySelectorAll('[data-cpr-pickup-notice], [data-cpr-add-confirmation]').forEach(function (el) {
+      el.remove();
+    });
+    document.querySelectorAll('.cpr-confirmation-anchor').forEach(function (el) {
+      el.classList.remove('cpr-confirmation-anchor');
+    });
+    document.documentElement.classList.remove('cpr-has-pickup-only-rule', 'cpr-has-preorder-rule');
+    if (preorderModule) preorderModule.deactivatePreorder();
+
+    var rules = parseRules(appEl);
+    var legacyPickupOnly = appEl.dataset.cprLegacyPickupOnly === 'true';
+
+    var pickupOnly =
+      rules && rules.version === 1 && rules.pickup_only && typeof rules.pickup_only.enabled === 'boolean'
+        ? rules.pickup_only
+        : legacyPickupOnly
+          ? { enabled: true, message: 'This item is available for in-store pickup only.' }
+          : { enabled: false, message: '' };
+
+    appEl.dataset.cprPickupMessage =
+      typeof pickupOnly.message === 'string' && pickupOnly.message
+        ? pickupOnly.message
+        : 'This item is available for in-store pickup only.';
+
+    if (appEl.dataset.cprProductPage !== 'true') return;
+
+    var preorder =
+      rules && rules.version === 1 && rules.preorder && rules.preorder.enabled == 1 ? rules.preorder : null;
+
+    appEl.dataset.cprPreorderEnabled = preorder ? 'true' : 'false';
+    appEl.dataset.cprPreorderMessage = preorder
+      ? (pickupOnly.enabled ? appEl.dataset.cprPickupMessage + ' ' : '') +
+        'This preorder item will be released on ' +
+        (preorder.releaseDate || 'the preorder release date') +
+        '. Please confirm that you want to continue.'
+      : '';
+
+    if (preorder) {
+      loadModule(appEl.dataset.cprModulePreorder).then(function (mod) {
+        preorderModule = mod;
+        mod.applyPreorderRule(appEl, preorder, appEl.dataset.cprStoreTimezone || 'UTC');
+      });
+    }
+
+    if (pickupOnly.enabled) {
+      loadModule(appEl.dataset.cprModulePickupOnly).then(function (mod) {
+        mod.applyPickupOnlyRule(appEl);
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', render, { once: true });
+  } else {
+    render();
+  }
+  document.addEventListener('shopify:section:load', render);
+  document.addEventListener('shopify:section:reorder', render);
+  document.addEventListener('shopify:section:select', render);
+})();

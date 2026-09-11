@@ -28,6 +28,8 @@
   {% endif %}
   data-cpr-rules='{{ cpr_rules | default: blank | json | escape }}'
   data-cpr-legacy-pickup-only='{{ cpr_legacy_pickup_only | default: false | json | escape }}'
+  data-cpr-module-pickup-only="{{ 'product-rules-rule-pickup-only.js' | asset_url }}"
+  data-cpr-module-preorder="{{ 'product-rules-rule-preorder.js' | asset_url }}"
   hidden
 ></div>
 

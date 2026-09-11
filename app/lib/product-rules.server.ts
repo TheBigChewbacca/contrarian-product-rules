@@ -1,6 +1,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import {
+  createDefaultPreorderRule,
   normalizeProductRules,
   parseProductRules,
   type ProductRulesV1,
@@ -602,6 +603,69 @@ export async function backfillProductRuleTags(
   }
 
   return { synced, errors };
+}
+
+// Mirrors a tag change back onto the rule: if a merchant (or another app)
+// adds/removes cpr-pickup-only or cpr-preorder directly on the product, this
+// applies the same effect as toggling the rule in the app — including the
+// delivery profile reassignment / preorder collection membership — so the
+// tag behaves as a real on/off control, not just a display label.
+//
+// Called from the products/update webhook. Safe to call on every update: it
+// only writes when the tag state and rule state actually disagree, so the
+// follow-up webhook fired by that write's own tag/metafield confirmation
+// sees everything already in sync and no-ops.
+export async function reconcileRulesFromTags(
+  admin: AdminApiContext,
+  shop: string,
+  productId: string,
+): Promise<GraphQLUserError[]> {
+  const product = await loadProduct(admin, productId);
+  if (!product) return [];
+
+  const { rules: currentRules } = resolveProductRules(product);
+  const tagSet = new Set(product.tags);
+  const wantsPickup = tagSet.has(PICKUP_ONLY_TAG);
+  const wantsPreorder = tagSet.has(PREORDER_TAG);
+
+  const pickupChanged = wantsPickup !== currentRules.pickup_only.enabled;
+  const preorderChanged = wantsPreorder !== (currentRules.preorder?.enabled === true);
+  if (!pickupChanged && !preorderChanged) return [];
+
+  const nextRules: ProductRulesV1 = {
+    ...currentRules,
+    pickup_only: pickupChanged
+      ? { ...currentRules.pickup_only, enabled: wantsPickup }
+      : currentRules.pickup_only,
+    preorder: preorderChanged
+      ? { ...(currentRules.preorder ?? createDefaultPreorderRule()), enabled: wantsPreorder }
+      : currentRules.preorder,
+  };
+
+  const errors = await saveProductRules(admin, productId, nextRules);
+  if (errors.length > 0) return errors;
+
+  const sideEffectErrors: GraphQLUserError[] = [];
+
+  if (pickupChanged) {
+    const [pickupProfileId, deliveryProfiles] = await Promise.all([
+      loadPickupShippingProfile(shop),
+      loadDeliveryProfiles(admin),
+    ]);
+    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
+    sideEffectErrors.push(
+      ...(await syncProductPickupProfile(admin, product.variantIds, wantsPickup, pickupProfileId, defaultProfileId)),
+    );
+  }
+
+  if (preorderChanged) {
+    const preorderCollectionId = await loadPreorderCollectionId(shop);
+    sideEffectErrors.push(
+      ...(await syncPreorderCollection(admin, productId, wantsPreorder, preorderCollectionId)),
+    );
+  }
+
+  return sideEffectErrors;
 }
 
 export async function assignProductToDeliveryProfile(

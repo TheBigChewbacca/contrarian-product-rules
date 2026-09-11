@@ -57,6 +57,14 @@ api_version = "2026-07"
   uri = "/webhooks/orders_create"
   topics = [ "orders/create" ]
 
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products_update"
+  topics = [ "products/update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products_create"
+  topics = [ "products/create" ]
+
 [auth]
 redirect_urls = [
   "https://contrarian-product-rules-198806279895.us-west1.run.app/auth/callback",

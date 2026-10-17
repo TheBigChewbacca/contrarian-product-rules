@@ -128,10 +128,16 @@ if (actionType === "profile") {
   }
 
   if (actionType === "syncTags") {
-    const { synced, errors } = await backfillProductRuleTags(admin);
-    return errors.length > 0
-      ? { ok: false, message: errors.map((error) => error.message).join(" ") }
-      : { ok: true, tagSyncMessage: `Synced tags for ${synced} product${synced === 1 ? "" : "s"}.` };
+    // Scans the whole catalog via the strict loader, so a failed page throws
+    // rather than silently backfilling a subset of the products.
+    try {
+      const { synced, errors } = await backfillProductRuleTags(admin);
+      return errors.length > 0
+        ? { ok: false, message: errors.map((error) => error.message).join(" ") }
+        : { ok: true, tagSyncMessage: `Synced tags for ${synced} product${synced === 1 ? "" : "s"}.` };
+    } catch (error) {
+      return { ok: false, message: `Could not sync tags: ${auditErrorMessage(error)}` };
+    }
   }
 
   const productId = String(formData.get("productId") || "");

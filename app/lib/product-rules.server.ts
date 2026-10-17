@@ -210,11 +210,30 @@ export async function loadCollections(
   return collections;
 }
 
-export async function loadProductRuleSummaries(
+export type ProductRuleSummaryPage = {
+  products: ProductRuleSummary[];
+  pageInfo: ProductRulePageInfo;
+};
+
+const EMPTY_SUMMARY_PAGE: ProductRuleSummaryPage = {
+  products: [],
+  pageInfo: { hasNextPage: false, endCursor: null },
+};
+
+// `strict` decides what a GraphQL error means to the caller.
+//
+// The dashboard renders one page at a time and degrades quietly: a failure
+// logs and shows an empty table, which is how it behaved before. Callers that
+// compare the whole catalog against something else cannot afford that — a
+// short catalog would make the pickup audit report healthy products as
+// mis-assigned, or make a profile change move only some of the variants — so
+// they go through loadAllProductRuleSummaries, which propagates the failure.
+async function loadProductRuleSummaryPage(
   admin: AdminApiContext,
-  search = "",
-  after?: string,
-): Promise<{ products: ProductRuleSummary[]; pageInfo: ProductRulePageInfo }> {
+  search: string,
+  after: string | undefined,
+  strict: boolean,
+): Promise<ProductRuleSummaryPage> {
   const response = await admin.graphql(
     `#graphql
       query ProductRulesProducts($query: String, $after: String) {
@@ -238,6 +257,7 @@ export async function loadProductRuleSummaries(
       }`,
     { variables: { query: search.trim() || undefined, after: after || undefined }, tries: 3 },
   );
+  const context = "Unable to load products from Shopify";
   const result = (await response.json()) as {
     data?: {
       products?: {
@@ -255,10 +275,15 @@ export async function loadProductRuleSummaries(
     };
     errors?: GraphQLError[];
   };
-  // This feeds both the dashboard and auditPickupDeliveryProfile. Swallowing a
-  // GraphQL error here would show an empty product table, and would make the
-  // audit conclude that nothing needs the pickup profile at all.
-  assertNoGraphQLErrors(result, "Unable to load products from Shopify");
+  if (strict) {
+    assertNoGraphQLErrors(result, context);
+  } else {
+    const errors = graphQLErrors(result);
+    if (errors.length > 0) {
+      console.error(context, { errors });
+      return EMPTY_SUMMARY_PAGE;
+    }
+  }
 
   const products = (result.data?.products?.nodes ?? []).map((product) => ({
       id: product.id,
@@ -275,6 +300,17 @@ export async function loadProductRuleSummaries(
   };
 }
 
+// One page, for the dashboard. Degrades quietly to an empty page.
+export async function loadProductRuleSummaries(
+  admin: AdminApiContext,
+  search = "",
+  after?: string,
+): Promise<ProductRuleSummaryPage> {
+  return loadProductRuleSummaryPage(admin, search, after, false);
+}
+
+// The whole catalog, for callers that reconcile it against delivery profiles
+// or tags. Throws rather than returning a short list.
 export async function loadAllProductRuleSummaries(
   admin: AdminApiContext,
   search = "",
@@ -284,10 +320,13 @@ export async function loadAllProductRuleSummaries(
   let pageInfo: ProductRulePageInfo = { hasNextPage: true, endCursor: null };
 
   while (pageInfo.hasNextPage) {
-    const page = await loadProductRuleSummaries(admin, search, after);
+    const page = await loadProductRuleSummaryPage(admin, search, after, true);
     products.push(...page.products);
     pageInfo = page.pageInfo;
     after = pageInfo.endCursor ?? undefined;
+    if (pageInfo.hasNextPage && !after) {
+      throw new Error("Shopify reported another page of products without a cursor.");
+    }
   }
 
   return products;

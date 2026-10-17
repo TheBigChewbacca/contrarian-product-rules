@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, clearCachedSessions } from "../shopify.server";
 import db from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -16,6 +16,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 scope: current.toString(),
             },
         });
+        // Written through Prisma rather than `sessionStorage`, so the cached
+        // copy still carries the old scope until it is dropped.
+        clearCachedSessions();
     }
     return new Response();
 };

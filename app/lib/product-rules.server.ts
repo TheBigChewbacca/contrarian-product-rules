@@ -6,6 +6,7 @@ import {
   parseProductRules,
   type ProductRulesV1,
 } from "./product-rules";
+import { TtlCache, parseTtlMs } from "./ttl-cache.server";
 
 const NAMESPACE = "contrarian_product_rules";
 const KEY = "rules";
@@ -93,8 +94,48 @@ export type ProductRulePageInfo = {
   endCursor: string | null;
 };
 
-export async function loadPickupShippingProfile(shop: string): Promise<string> {
+// ShopSettings is a single row per shop that only changes when the merchant
+// picks a profile or collection in the app, but it was being read on every
+// webhook delivery and every page load. Those reads were part of what kept the
+// Neon compute from ever autosuspending, so they are served from a
+// process-local cache and invalidated by the two writers below.
+type CachedShopSettings = {
+  pickupShippingProfileId: string | null;
+  preorderCollectionId: string | null;
+} | null;
+
+const SHOP_SETTINGS_TTL_MS = parseTtlMs(
+  process.env.SHOP_SETTINGS_CACHE_TTL_MS,
+  30 * 60 * 1000,
+);
+const shopSettingsCache = new TtlCache<CachedShopSettings>(SHOP_SETTINGS_TTL_MS);
+
+async function loadShopSettings(shop: string): Promise<CachedShopSettings> {
+  const cached = shopSettingsCache.get(shop);
+  if (cached) return cached.value;
+
   const settings = await prisma.shopSettings.findUnique({ where: { shop } });
+  const value: CachedShopSettings = settings
+    ? {
+        pickupShippingProfileId: settings.pickupShippingProfileId,
+        preorderCollectionId: settings.preorderCollectionId,
+      }
+    : null;
+  // A missing row is cached too: it is the normal state before the merchant
+  // configures anything, and both writers invalidate the entry.
+  shopSettingsCache.set(shop, value);
+  return value;
+}
+
+// Exported so the uninstall webhook can drop a shop's cached settings, and so
+// tests can start from a clean cache.
+export function clearShopSettingsCache(shop?: string): void {
+  if (shop) shopSettingsCache.delete(shop);
+  else shopSettingsCache.clear();
+}
+
+export async function loadPickupShippingProfile(shop: string): Promise<string> {
+  const settings = await loadShopSettings(shop);
   return settings?.pickupShippingProfileId ?? "";
 }
 
@@ -107,10 +148,11 @@ export async function savePickupShippingProfile(
     create: { shop, pickupShippingProfileId: profileId || null },
     update: { pickupShippingProfileId: profileId || null },
   });
+  shopSettingsCache.delete(shop);
 }
 
 export async function loadPreorderCollectionId(shop: string): Promise<string> {
-  const settings = await prisma.shopSettings.findUnique({ where: { shop } });
+  const settings = await loadShopSettings(shop);
   return settings?.preorderCollectionId ?? "";
 }
 
@@ -123,6 +165,7 @@ export async function savePreorderCollectionId(
     create: { shop, preorderCollectionId: collectionId || null },
     update: { preorderCollectionId: collectionId || null },
   });
+  shopSettingsCache.delete(shop);
 }
 
 export type PreorderCollection = { id: string; title: string };
@@ -210,7 +253,12 @@ export async function loadProductRuleSummaries(
         pageInfo: ProductRulePageInfo;
       };
     };
+    errors?: GraphQLError[];
   };
+  // This feeds both the dashboard and auditPickupDeliveryProfile. Swallowing a
+  // GraphQL error here would show an empty product table, and would make the
+  // audit conclude that nothing needs the pickup profile at all.
+  assertNoGraphQLErrors(result, "Unable to load products from Shopify");
 
   const products = (result.data?.products?.nodes ?? []).map((product) => ({
       id: product.id,
@@ -789,6 +837,130 @@ export type DeliveryProfileAssignment = {
   variantIds: string[];
 };
 
+// Verified against the 2026-07 Admin schema: DeliveryProfile.profileItems is a
+// DeliveryProfileItemConnection! taking (first, after, …), and each
+// DeliveryProfileItem exposes product: Product! and
+// variants: ProductVariantConnection!.
+//
+// The page sizes matter. A single Admin GraphQL query may not exceed a
+// calculated cost of 1,000 points, and a connection is sized by its `first`
+// argument times the cost of each node. The previous shape asked for
+// profileItems(first: 100) each containing variants(first: 250) — on the order
+// of 25,000 nodes — so Shopify rejected the whole request on cost. Because the
+// old code read `result.data?…` without ever inspecting `errors`, that
+// rejection surfaced as an empty assignment list, and the audit then reported
+// every pickup-only product as missing from the profile. Hence both the
+// smaller pages below and the hard failures throughout this function.
+const PROFILE_ITEM_PAGE_SIZE = 40;
+const PROFILE_ITEM_VARIANT_PAGE_SIZE = 20;
+const PROFILE_ITEM_VARIANT_OVERFLOW_PAGE_SIZE = 250;
+
+type ProfileItemVariants = {
+  nodes: Array<{ id: string }>;
+  pageInfo: { hasNextPage: boolean; endCursor: string | null };
+};
+
+function assertNoGraphQLErrors(
+  result: { errors?: GraphQLError[] },
+  context: string,
+): void {
+  const errors = graphQLErrors(result);
+  if (errors.length === 0) return;
+  const message = errors.map((error) => error.message).join("; ");
+  console.error(context, { errors });
+  throw new Error(`${context}: ${message}`);
+}
+
+// Resumes one profile item's variant list when it has more variants than a
+// single page of the main query carries. `itemAfter` is the cursor of the item
+// *before* the one being resumed, so `profileItems(first: 1, after: itemAfter)`
+// re-selects exactly that item at a cost of roughly 255 points.
+async function loadRemainingProfileItemVariants(
+  admin: AdminApiContext,
+  profileId: string,
+  itemAfter: string | undefined,
+  expectedProductId: string,
+  firstVariantCursor: string | null,
+): Promise<string[]> {
+  const variantIds: string[] = [];
+  let variantAfter = firstVariantCursor;
+
+  while (variantAfter) {
+    const response = await admin.graphql(
+      `#graphql
+        query DeliveryProfileItemVariants(
+          $id: ID!
+          $itemAfter: String
+          $variantAfter: String
+          $variants: Int!
+        ) {
+          deliveryProfile(id: $id) {
+            profileItems(first: 1, after: $itemAfter) {
+              nodes {
+                product { id }
+                variants(first: $variants, after: $variantAfter) {
+                  nodes { id }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+          }
+        }`,
+      {
+        variables: {
+          id: profileId,
+          itemAfter: itemAfter || undefined,
+          variantAfter,
+          variants: PROFILE_ITEM_VARIANT_OVERFLOW_PAGE_SIZE,
+        },
+        tries: 3,
+      },
+    );
+    const result = (await response.json()) as {
+      data?: {
+        deliveryProfile?: {
+          profileItems?: {
+            nodes: Array<{
+              product: { id: string } | null;
+              variants: ProfileItemVariants;
+            }>;
+          } | null;
+        } | null;
+      };
+      errors?: GraphQLError[];
+    };
+    assertNoGraphQLErrors(
+      result,
+      `Unable to page the variants of product ${expectedProductId} in delivery profile ${profileId}`,
+    );
+
+    const node = result.data?.deliveryProfile?.profileItems?.nodes?.[0];
+    if (!node) {
+      throw new Error(
+        `Delivery profile ${profileId} returned no item while paging the variants of product ${expectedProductId}.`,
+      );
+    }
+    // profileItems is re-paged across requests, so guard against the list
+    // shifting underneath us rather than silently attributing another
+    // product's variants to this one.
+    if (node.product?.id !== expectedProductId) {
+      throw new Error(
+        `Delivery profile ${profileId} items changed while paging variants (expected ${expectedProductId}, got ${node.product?.id ?? "nothing"}). Re-run the check.`,
+      );
+    }
+
+    variantIds.push(...node.variants.nodes.map((variant) => variant.id));
+    variantAfter = node.variants.pageInfo.hasNextPage
+      ? node.variants.pageInfo.endCursor
+      : null;
+  }
+
+  return variantIds;
+}
+
+// Throws rather than returning a partial list: an empty result here is
+// indistinguishable from "the profile is empty", and the audit built on top of
+// it would report every pickup-only product as mis-assigned.
 export async function loadDeliveryProfileProductAssignments(
   admin: AdminApiContext,
   profileId: string,
@@ -796,6 +968,7 @@ export async function loadDeliveryProfileProductAssignments(
   if (!profileId) return [];
   const assignments: DeliveryProfileAssignment[] = [];
   let after: string | undefined;
+  let previousItemCursor: string | undefined;
   let hasNextPage = true;
 
   // DeliveryProfile.profileItems is used instead of legacy shipping zones.
@@ -806,44 +979,102 @@ export async function loadDeliveryProfileProductAssignments(
   while (hasNextPage) {
     const response = await admin.graphql(
       `#graphql
-        query DeliveryProfileAssignments($id: ID!, $after: String) {
+        query DeliveryProfileAssignments(
+          $id: ID!
+          $after: String
+          $items: Int!
+          $variants: Int!
+        ) {
           deliveryProfile(id: $id) {
-            profileItems(first: 100, after: $after) {
-              nodes {
-                product { id title }
-                variants(first: 250) { nodes { id } }
+            id
+            profileItems(first: $items, after: $after) {
+              edges {
+                cursor
+                node {
+                  product { id title }
+                  variants(first: $variants) {
+                    nodes { id }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
               }
               pageInfo { hasNextPage endCursor }
             }
           }
         }`,
-      { variables: { id: profileId, after: after || undefined } },
+      {
+        variables: {
+          id: profileId,
+          after: after || undefined,
+          items: PROFILE_ITEM_PAGE_SIZE,
+          variants: PROFILE_ITEM_VARIANT_PAGE_SIZE,
+        },
+        tries: 3,
+      },
     );
     const result = (await response.json()) as {
       data?: {
         deliveryProfile?: {
+          id: string;
           profileItems?: {
-            nodes: Array<{
-              product: { id: string; title: string } | null;
-              variants: { nodes: Array<{ id: string }> };
+            edges: Array<{
+              cursor: string;
+              node: {
+                product: { id: string; title: string } | null;
+                variants: ProfileItemVariants;
+              };
             }>;
             pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          };
-        };
+          } | null;
+        } | null;
       };
+      errors?: GraphQLError[];
     };
-    const items = result.data?.deliveryProfile?.profileItems;
-    for (const node of items?.nodes ?? []) {
-      if (node.product) {
-        assignments.push({
-          productId: node.product.id,
-          title: node.product.title,
-          variantIds: node.variants.nodes.map((variant) => variant.id),
-        });
-      }
+    assertNoGraphQLErrors(
+      result,
+      `Unable to read the product assignments of delivery profile ${profileId}`,
+    );
+
+    const profile = result.data?.deliveryProfile;
+    if (!profile) {
+      throw new Error(
+        `Delivery profile ${profileId} was not found. Pick the pickup shipping profile again on the Product rules page.`,
+      );
     }
-    hasNextPage = items?.pageInfo.hasNextPage ?? false;
-    after = items?.pageInfo.endCursor ?? undefined;
+    const items = profile.profileItems;
+    if (!items) {
+      throw new Error(
+        `Shopify returned no profileItems connection for delivery profile ${profileId}.`,
+      );
+    }
+
+    for (const edge of items.edges) {
+      const product = edge.node.product;
+      if (product) {
+        const variantIds = edge.node.variants.nodes.map((variant) => variant.id);
+        if (edge.node.variants.pageInfo.hasNextPage) {
+          variantIds.push(
+            ...(await loadRemainingProfileItemVariants(
+              admin,
+              profileId,
+              previousItemCursor,
+              product.id,
+              edge.node.variants.pageInfo.endCursor,
+            )),
+          );
+        }
+        assignments.push({ productId: product.id, title: product.title, variantIds });
+      }
+      previousItemCursor = edge.cursor;
+    }
+
+    hasNextPage = items.pageInfo.hasNextPage;
+    after = items.pageInfo.endCursor ?? undefined;
+    if (hasNextPage && !after) {
+      throw new Error(
+        `Delivery profile ${profileId} reported another page of items without a cursor.`,
+      );
+    }
   }
 
   return assignments;

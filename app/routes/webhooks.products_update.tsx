@@ -13,6 +13,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response();
   }
 
-  const { admin } = await unauthenticated.admin(shop);
-  return respondToProductTagWebhook(admin, shop, topic, productId);
+  // `unauthenticated.admin` is itself a session read, so it is deferred into a
+  // thunk: an update that cannot have changed the rule state returns without
+  // touching Postgres or Shopify at all.
+  return respondToProductTagWebhook({
+    shop,
+    topic,
+    productId,
+    payload,
+    loadAdmin: async () => (await unauthenticated.admin(shop)).admin,
+  });
 };

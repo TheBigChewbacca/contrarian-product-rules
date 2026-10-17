@@ -53,6 +53,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { ...productsPage, deliveryProfiles, pickupShippingProfileId, rule, search, cursor, activeOnly };
 };
 
+function auditErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown Shopify API error";
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -62,28 +66,42 @@ if (actionType === "profile") {
     const profileId = String(formData.get("profileId") || "");
     const previousProfileId = await loadPickupShippingProfile(session.shop);
     if (previousProfileId !== profileId) {
-      const variantIds = await loadEnabledPickupVariantIds(admin);
-      const errors = await reassignPickupProfileVariants(admin, previousProfileId, profileId, variantIds);
-      if (errors.length > 0) return { ok: false, message: errors.map((error) => error.message).join(" ") };
+      try {
+        const variantIds = await loadEnabledPickupVariantIds(admin);
+        const errors = await reassignPickupProfileVariants(admin, previousProfileId, profileId, variantIds);
+        if (errors.length > 0) return { ok: false, message: errors.map((error) => error.message).join(" ") };
+      } catch (error) {
+        // The catalog scan can fail outright (throttling, cost). Leave the
+        // stored profile untouched so the next attempt starts from a known
+        // state rather than from a half-moved set of variants.
+        return { ok: false, message: `Could not move products to the new profile: ${auditErrorMessage(error)}` };
+      }
     }
     await savePickupShippingProfile(session.shop, profileId);
     return { ok: true };
   }
 
+  // auditPickupDeliveryProfile throws if Shopify rejects either half of the
+  // comparison, because a partial read would make every pickup-only product
+  // look mis-assigned. Report that instead of showing a confident wrong answer.
   if (actionType === "audit") {
     const pickupProfileId = await loadPickupShippingProfile(session.shop);
     if (!pickupProfileId) {
       return { ok: true, mismatches: [] as PickupProfileMismatch[], auditMessage: "No pickup shipping profile is configured yet." };
     }
-    const mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
-    return {
-      ok: true,
-      mismatches,
-      auditMessage:
-        mismatches.length === 0
-          ? "All pickup-only products are correctly assigned."
-          : `Found ${mismatches.length} product${mismatches.length === 1 ? "" : "s"} out of sync.`,
-    };
+    try {
+      const mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
+      return {
+        ok: true,
+        mismatches,
+        auditMessage:
+          mismatches.length === 0
+            ? "All pickup-only products are correctly assigned."
+            : `Found ${mismatches.length} product${mismatches.length === 1 ? "" : "s"} out of sync.`,
+      };
+    } catch (error) {
+      return { ok: false, message: `Could not check assignments: ${auditErrorMessage(error)}` };
+    }
   }
 
   if (actionType === "fix") {
@@ -93,7 +111,12 @@ if (actionType === "profile") {
     }
     const deliveryProfiles = await loadDeliveryProfiles(admin);
     const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
-    const mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
+    let mismatches: PickupProfileMismatch[];
+    try {
+      mismatches = await auditPickupDeliveryProfile(admin, pickupProfileId);
+    } catch (error) {
+      return { ok: false, message: `Could not check assignments: ${auditErrorMessage(error)}` };
+    }
     const errors = await fixPickupDeliveryProfileMismatches(admin, mismatches, pickupProfileId, defaultProfileId);
     return errors.length > 0
       ? { ok: false, message: errors.map((error) => error.message).join(" ") }
@@ -241,6 +264,11 @@ export default function Index() {
             <s-link href={activeRule === "preorder" ? "/app/preorder" : "/app/pickup"}>Add product with this rule</s-link>
           </div>
         </div>
+        {activeRule === "pickup" && auditFetcher.data?.ok === false && (
+          <s-banner tone="critical">
+            <p>{auditFetcher.data.message}</p>
+          </s-banner>
+        )}
         {activeRule === "pickup" && auditFetcher.data?.auditMessage && (
           <s-banner tone={mismatches.length > 0 ? "warning" : "success"}>
             <p>{auditFetcher.data.auditMessage}</p>

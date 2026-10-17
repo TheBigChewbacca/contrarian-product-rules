@@ -13,6 +13,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return new Response();
   }
 
-  const { admin } = await unauthenticated.admin(shop);
-  return respondToProductTagWebhook(admin, shop, topic, productId);
+  return respondToProductTagWebhook({
+    shop,
+    topic,
+    productId,
+    payload,
+    loadAdmin: async () => (await unauthenticated.admin(shop)).admin,
+  });
 };

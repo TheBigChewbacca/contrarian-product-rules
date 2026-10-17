@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, clearCachedSessions } from "../shopify.server";
+import { clearShopSettingsCache } from "../lib/product-rules.server";
 import db from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -12,6 +13,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (session) {
     await db.session.deleteMany({ where: { shop } });
   }
+
+  // These rows are deleted through Prisma rather than through `sessionStorage`,
+  // so the in-process caches have to be dropped by hand or this instance would
+  // keep serving the uninstalled shop's session and settings.
+  clearCachedSessions();
+  clearShopSettingsCache(shop);
 
   return new Response();
 };

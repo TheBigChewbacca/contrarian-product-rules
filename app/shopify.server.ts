@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+import { CachedSessionStorage } from "./lib/cached-session-storage.server";
 
 const requiredScopes = [
   "read_products",
@@ -24,6 +25,13 @@ const configuredScopes = (process.env.SCOPES ?? "")
   .filter(Boolean);
 const scopes = [...new Set([...configuredScopes, ...requiredScopes])];
 
+// Held in a variable so routes that write to the Session table directly with
+// Prisma (the app/uninstalled and app/scopes_update webhooks) can drop the
+// cached copies afterwards.
+const cachedSessionStorage = new CachedSessionStorage(
+  new PrismaSessionStorage(prisma),
+);
+
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
@@ -31,7 +39,9 @@ const shopify = shopifyApp({
   scopes,
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new PrismaSessionStorage(prisma),
+  // Wrapped so repeated session reads within one warm Cloud Run instance do
+  // not each hit Neon; see app/lib/cached-session-storage.server.ts.
+  sessionStorage: cachedSessionStorage,
   distribution: AppDistribution.AppStore,
   future: {
     expiringOfflineAccessTokens: true,
@@ -49,3 +59,7 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
+
+// Call after writing to the Session table outside of `sessionStorage`, so the
+// next read does not serve a session that was just deleted or re-scoped.
+export const clearCachedSessions = () => cachedSessionStorage.clear();

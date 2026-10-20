@@ -3,14 +3,6 @@ import { reconcileRulesFromTags } from "./product-rules.server";
 import { isRetryable } from "./webhook-retry.server";
 import { TtlCache, parseTtlMs } from "./ttl-cache.server";
 
-// TEMPORARY DIAGNOSTIC. products/update was arriving roughly once a minute,
-// which kept Neon's compute from ever autosuspending. This logs just enough to
-// tell a feedback loop from our own writes (the same product ID over and over)
-// apart from an external sync (many different product IDs). Turn it off with
-// PRODUCT_WEBHOOK_DEBUG_LOG=false on the Cloud Run service once the source is
-// identified, then delete this block.
-const DEBUG_LOG = process.env.PRODUCT_WEBHOOK_DEBUG_LOG !== "false";
-
 const TAG_STATE_TTL_MS = parseTtlMs(
   process.env.PRODUCT_TAG_STATE_CACHE_TTL_MS,
   30 * 60 * 1000,
@@ -24,7 +16,6 @@ const reconciledTagState = new TtlCache<string>(TAG_STATE_TTL_MS);
 
 export type ProductTagWebhookPayload = {
   tags?: unknown;
-  updated_at?: unknown;
 };
 
 // products/update serializes tags as a single comma-separated string.
@@ -64,17 +55,6 @@ export async function respondToProductTagWebhook({
   const cacheKey = `${shop}:${productId}`;
   const alreadyReconciled =
     signature !== null && reconciledTagState.get(cacheKey)?.value === signature;
-
-  if (DEBUG_LOG) {
-    console.log("product webhook received", {
-      shop,
-      topic,
-      productId,
-      updatedAt: typeof payload.updated_at === "string" ? payload.updated_at : null,
-      tags: signature,
-      skipped: alreadyReconciled,
-    });
-  }
 
   // Nothing the rule logic reads has changed since this process last
   // reconciled the product, so return without touching Postgres or Shopify.

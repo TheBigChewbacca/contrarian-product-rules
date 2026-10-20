@@ -37,8 +37,12 @@ after one extra hop rather than running forever.
 
 A loop would also look bursty. An even ~1/minute cadence looks more like an
 external sync (inventory, pricing, or a catalog feed) touching many different
-products. `PRODUCT_WEBHOOK_DEBUG_LOG` (below) settles it: one repeated product
-ID means a loop, many distinct IDs mean an external writer.
+products.
+
+**This was never settled.** A temporary per-delivery log shipped with the fix
+to tell the two apart, but the compute started suspending before the question
+was answered, and the log was removed rather than left billing. See
+"Unfinished" at the end.
 
 ## What changed
 
@@ -93,7 +97,7 @@ exist and filters require API version 2024-07 or later (this app is on
 topics = [ "products/update" ]
 uri = "/webhooks/products_update"
 filter = "variants.price:>=10.00"
-include_fields = [ "id", "admin_graphql_api_id", "tags", "updated_at" ]
+include_fields = [ "id", "admin_graphql_api_id", "tags" ]
 ```
 
 **A tag filter must not be used here.** Shopify evaluates a filter against
@@ -115,24 +119,31 @@ Per the brief, the `products/update` subscription is **kept**:
 `respondToProductTagWebhook` is what keeps new and changed variants in the
 right shipping profile.
 
-## Diagnosing the ~1/minute updates
+## Outcome
 
-`PRODUCT_WEBHOOK_DEBUG_LOG` defaults to on. Each delivery logs:
+Deployed in `b16cba8` on 2026-10-17. Neon's compute now suspends during quiet
+periods, and the Neon max compute was separately set to 0.25 CU.
 
-```
-product webhook received { shop, topic, productId, updatedAt, tags, skipped }
-```
+## Unfinished: what generates a product update every minute
+
+Still unknown. The fix works by making those deliveries *do nothing*, not by
+stopping them — Shopify keeps sending them, and the short circuit returns 200
+without touching Postgres or the Admin API.
+
+That leaves one narrow way for the problem to come back. The short circuit
+keys on a normalized signature of `payload.tags`, so it only holds while
+whatever is generating the updates leaves tags alone. If that writer ever
+starts touching tags, every delivery looks new, each one reconciles, and the
+compute is held awake again.
+
+To pick the question back up, log one line per delivery in
+`respondToProductTagWebhook` with `productId` and whether it was skipped, then
+run for an hour and count distinct product IDs:
 
 - the same `productId` repeating → a feedback loop from our own writes
 - many distinct `productId`s → an external sync or feed
-- `skipped: true` → the short circuit absorbed it (no DB, no Admin API)
 
-Set `PRODUCT_WEBHOOK_DEBUG_LOG=false` on the Cloud Run service to silence it,
-then delete the block marked `TEMPORARY DIAGNOSTIC` in
-`app/lib/product-rule-tag-webhook.server.ts`.
-
-## Success check
-
-After deploying, Neon's Operations log should show **Suspend compute** during
-quiet periods. If it still does not, the remaining wake-ups are the deliveries
-that are *not* skipped — the debug log identifies them.
+Shopify's payload says nothing about *who* made the change, so a result of
+"external" only narrows it; the installed apps list in the Shopify admin is
+where it gets named. Keep any such logging temporary — Cloud Logging volume is
+billed, and at ~65 deliveries an hour this is about 1,500 lines a day.

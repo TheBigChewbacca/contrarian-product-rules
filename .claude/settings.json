@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
+      "Bash(git branch -D:*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Bash(shopify app deploy:*)",
+      "Bash(shopify app release:*)",
+      "Bash(shopify theme push:*)",
+      "Bash(shopify theme publish:*)",
+      "Bash(npm publish:*)",
+      "Bash(prisma migrate reset:*)",
+      "Bash(npx prisma migrate reset:*)",
+      "Bash(prisma db push --force-reset:*)",
+      "Bash(npx prisma db push --force-reset:*)",
+      "Bash(npm run deploy:*)",
+      "Bash(prisma migrate deploy:*)",
+      "Bash(npx prisma migrate deploy:*)",
+      "Bash(gcloud run deploy:*)",
+      "Bash(gcloud run services update-traffic:*)",
+      "Bash(gcloud run services delete:*)",
+      "Bash(gcloud secrets:*)",
+      "Bash(gh workflow run:*)"
+    ]
+  }
+}

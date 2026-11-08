@@ -1,0 +1,28 @@
+# Project context
+- **What it is:** Embedded Shopify app (Contrarian Gaming) that applies per-product rules — Pickup Only and Preorder (Prompt/Graphic registered but not built out) — via a product metafield, an admin rule dashboard, and a theme app extension that enforces them on the storefront.
+- **Stack:** TypeScript, React 18, React Router 7.12 (`@shopify/shopify-app-react-router` 1.2), Vite 6, Prisma 6.16 on Neon Postgres, Polaris web components (`@shopify/polaris-types`), Node >=20.19 / 22.12. npm (package-lock.json).
+- **Layout:**
+  - `app/routes/` — flat-file routes: `app.*` admin pages (dashboard, pickup, preorder), `webhooks.*` handlers, `auth.*`, `health.tsx`
+  - `app/lib/` — rule logic: `rule-registry.ts` (rule keys), `rule-engine.ts`, `product-rules(.server).ts`, `product-rule-tag-webhook.server.ts` (tag→rule reconcile), `preorder-orders.server.ts`, caches (`ttl-cache`, `cached-session-storage`), `webhook-retry`
+  - `app/shopify.server.ts` — shopifyApp config; `app/db.server.ts` — Prisma client
+  - `extensions/contrarian-product-rules/` — theme app extension (embed + notice block, per-rule JS assets)
+  - `prisma/` — schema (`Session`, `ShopSettings`) and migrations
+  - `docs/DEPLOY.md` (Cloud Run setup), `docs/WEBHOOK-LOAD.md` (Neon autosuspend analysis)
+- **Commands:**
+  - install: `npm ci` then `npx prisma generate`
+  - dev: `npm run dev` (`shopify app dev`)
+  - build: `npm run build`
+  - typecheck: `npm run typecheck`; lint: `npm run lint`
+  - test: no test suite — CI (`.github/workflows/ci.yml`) runs prisma generate, typecheck, lint, build
+- **Conventions:** 2-space indent, Prettier + ESLint (TS, react, jsx-a11y, import). `.server.ts` suffix for server-only modules. Comments explain *why*. Branch + PR into `main`.
+- **Shopify:** Public (AppStore distribution) embedded app. Admin API `2026-07` (`ApiVersion.July26`), webhooks `2026-07`. Scopes: read/write products, orders, shipping, merchant_managed_fulfillment_orders (union of `SCOPES` env + hard-coded list in `shopify.server.ts`). Expiring offline tokens enabled. Webhooks: app/uninstalled, app/scopes_update, orders/create, products/create, products/update. Metafield `contrarian_product_rules.rules` (JSON, storefront public_read). Theme app extension only; no Functions.
+- **Sensitive areas:**
+  - Webhook routes (`app/routes/webhooks.*`) — HMAC via `authenticate.webhook`; keep DB reads cached
+  - Session storage / auth (`shopify.server.ts`, `cached-session-storage.server.ts`, uninstall/scopes_update write Session table directly then drop cache)
+  - Secrets: local `.env` (see `.env.example`); production in GCP Secret Manager (`cpr-*` secrets) wired by `deploy.yml`
+  - `shopify.app.toml` scopes/webhooks/URLs (changes need `shopify app deploy`)
+- **Notes:**
+  - Push to `main` auto-deploys to Google Cloud Run (`elaborate-howl-469119-f6`, `us-west1`) and runs `prisma migrate deploy` against production Neon.
+  - Neon bills by uptime and autosuspends after 5 min idle — avoid adding per-request DB reads, esp. in webhooks.
+  - Admin GraphQL query cost ceiling is 1,000 points; nested connections multiply, and a rejected query can look like an empty result.
+  - Verify Shopify API shapes with the Shopify Dev MCP; ask before deploys and migrations.

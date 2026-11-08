@@ -15,14 +15,17 @@
   - typecheck: `npm run typecheck`; lint: `npm run lint`
   - test: no test suite — CI (`.github/workflows/ci.yml`) runs prisma generate, typecheck, lint, build
 - **Conventions:** 2-space indent, Prettier + ESLint (TS, react, jsx-a11y, import). `.server.ts` suffix for server-only modules. Comments explain *why*. Branch + PR into `main`.
-- **Shopify:** Public (AppStore distribution) embedded app. Admin API `2026-07` (`ApiVersion.July26`), webhooks `2026-07`. Scopes: read/write products, orders, shipping, merchant_managed_fulfillment_orders (union of `SCOPES` env + hard-coded list in `shopify.server.ts`). Expiring offline tokens enabled. Webhooks: app/uninstalled, app/scopes_update, orders/create, products/create, products/update. Metafield `contrarian_product_rules.rules` (JSON, storefront public_read). Theme app extension only; no Functions.
+- **Shopify:** Public (AppStore distribution) embedded app with expiring offline tokens; theme app extension only, no Functions. Read these from their source of truth rather than from here:
+  - Admin API version: `apiVersion` in `app/shopify.server.ts`; webhook API version: `[webhooks] api_version` in `shopify.app.toml`
+  - Scopes: `requiredScopes` in `app/shopify.server.ts` (unioned with the `SCOPES` env) and `[access_scopes]` in `shopify.app.toml`
+  - Webhook topics and the `contrarian_product_rules.rules` metafield definition: `shopify.app.toml`
 - **Sensitive areas:**
   - Webhook routes (`app/routes/webhooks.*`) — HMAC via `authenticate.webhook`; keep DB reads cached
   - Session storage / auth (`shopify.server.ts`, `cached-session-storage.server.ts`, uninstall/scopes_update write Session table directly then drop cache)
   - Secrets: local `.env` (see `.env.example`); production in GCP Secret Manager (`cpr-*` secrets) wired by `deploy.yml`
   - `shopify.app.toml` scopes/webhooks/URLs (changes need `shopify app deploy`)
 - **Notes:**
-  - Push to `main` auto-deploys to Google Cloud Run (`elaborate-howl-469119-f6`, `us-west1`) and runs `prisma migrate deploy` against production Neon.
+  - Push to `main` auto-deploys to Google Cloud Run and runs `prisma migrate deploy` against production Neon (project/region/service: `docs/DEPLOY.md`).
   - Neon bills by uptime and autosuspends after 5 min idle — avoid adding per-request DB reads, esp. in webhooks.
   - Admin GraphQL query cost ceiling is 1,000 points; nested connections multiply, and a rejected query can look like an empty result.
-  - Verify Shopify API shapes with the Shopify Dev MCP; ask before deploys and migrations.
+  - Use the Shopify AI Toolkit for all Shopify API and platform work (per `AGENTS.md`), and verify API shapes with it; ask before deploys and migrations.

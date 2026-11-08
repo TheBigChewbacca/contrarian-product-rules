@@ -28,8 +28,13 @@ const scopes = [...new Set([...configuredScopes, ...requiredScopes])];
 // Held in a variable so routes that write to the Session table directly with
 // Prisma (the app/uninstalled and app/scopes_update webhooks) can drop the
 // cached copies afterwards.
+// The startup table check gets more attempts than the default 2 x 5s, because
+// a suspended Neon compute can take longer than that to accept connections.
 const cachedSessionStorage = new CachedSessionStorage(
-  new PrismaSessionStorage(prisma),
+  new PrismaSessionStorage(prisma, {
+    connectionRetries: 5,
+    connectionRetryIntervalMs: 3000,
+  }),
 );
 
 const shopify = shopifyApp({

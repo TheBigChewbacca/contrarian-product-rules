@@ -1,7 +1,10 @@
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import { describe, beforeAll, test, expect } from "vitest";
 import { buildFunction, getFunctionInfo, loadSchema, loadInputQuery, loadFixture, validateTestAssets, runFunction } from "@shopify/shopify-function-test-helpers";
+
+const testsDir = path.dirname(fileURLToPath(import.meta.url));
 
 describe("Default Integration Test", () => {
   let schema;
@@ -13,14 +16,14 @@ describe("Default Integration Test", () => {
   let wasmPath;
 
   beforeAll(async () => {
-    functionDir = path.dirname(__dirname);
+    functionDir = path.dirname(testsDir);
     await buildFunction(functionDir);
     functionInfo = await getFunctionInfo(functionDir);
     ({ schemaPath, functionRunnerPath, wasmPath, targeting } = functionInfo);
     schema = await loadSchema(schemaPath);
   }, 45000);
 
-  const fixturesDir = path.join(__dirname, "fixtures");
+  const fixturesDir = path.join(testsDir, "fixtures");
   const fixtureFiles = fs
     .readdirSync(fixturesDir)
     .filter((file) => file.endsWith(".json"))

@@ -1,0 +1,22 @@
+{
+  "payload": {
+    "export": "cart-delivery-options-transform-run",
+    "target": "cart.delivery-options.transform.run",
+    "input": {
+      "cart": {
+        "deliveryGroups": [
+          {
+            "cartLines": [
+              { "merchandise": { "__typename": "ProductVariant", "product": { "pickupOnly": false } } }
+            ],
+            "deliveryOptions": [
+              { "handle": "standard", "deliveryMethodType": "SHIPPING" },
+              { "handle": "store-pickup", "deliveryMethodType": "PICK_UP" }
+            ]
+          }
+        ]
+      }
+    },
+    "output": { "operations": [] }
+  }
+}

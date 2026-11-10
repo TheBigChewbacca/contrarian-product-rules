@@ -17,6 +17,9 @@ const requiredScopes = [
   "write_shipping",
   "read_merchant_managed_fulfillment_orders",
   "write_merchant_managed_fulfillment_orders",
+  // The Pickup Only checkout function (extensions/pickup-only-delivery).
+  "read_delivery_customizations",
+  "write_delivery_customizations",
 ];
 
 const configuredScopes = (process.env.SCOPES ?? "")

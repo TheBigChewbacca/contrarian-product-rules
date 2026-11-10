@@ -8,13 +8,13 @@ import {
   loadDeliveryProfiles,
   loadPickupShippingProfile,
   loadProduct,
-  resolveDefaultDeliveryProfileId,
   resolveProductRules,
   saveProductRules,
-  syncProductPickupProfile,
+  syncPickupShipping,
   type GraphQLUserError,
   type ProductRuleProduct,
 } from "../lib/product-rules.server";
+import { isMarketDrivenShipping, loadPickupCheckoutStatus } from "../lib/pickup-checkout.server";
 import { DEFAULT_PICKUP_ONLY_MESSAGE, normalizeProductRules } from "../lib/product-rules";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -22,14 +22,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const productId = new URL(request.url).searchParams.get("productId");
   const product = productId ? await loadProduct(admin, productId) : null;
   const resolved = product ? resolveProductRules(product) : null;
-  const [deliveryProfiles, pickupShippingProfileId] = await Promise.all([
-    loadDeliveryProfiles(admin),
+  const marketDrivenShipping = await isMarketDrivenShipping(admin, session.shop);
+  const [deliveryProfiles, pickupShippingProfileId, checkoutStatus] = await Promise.all([
+    marketDrivenShipping ? Promise.resolve([]) : loadDeliveryProfiles(admin),
     loadPickupShippingProfile(session.shop),
+    loadPickupCheckoutStatus(admin),
   ]);
   return {
     product,
     deliveryProfiles,
     pickupShippingProfileId,
+    marketDrivenShipping,
+    checkoutEnabled: checkoutStatus.available && checkoutStatus.enabled,
     rules: resolved?.rules ?? normalizeProductRules(null),
     usedLegacyFallback: resolved?.usedLegacyFallback ?? false,
   };
@@ -55,12 +59,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   let profileErrors: GraphQLUserError[] = [];
   if (product) {
-    const [pickupProfileId, deliveryProfiles] = await Promise.all([
-      loadPickupShippingProfile(session.shop),
-      loadDeliveryProfiles(admin),
-    ]);
-    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
-    profileErrors = await syncProductPickupProfile(admin, product.variantIds, enabled, pickupProfileId, defaultProfileId);
+    profileErrors = await syncPickupShipping(admin, session.shop, product.variantIds, enabled);
   }
 
   return { ok: errors.length === 0 && profileErrors.length === 0, errors: [...errors, ...profileErrors] };
@@ -120,12 +119,23 @@ export default function PickupOnlyPage() {
         <s-stack direction="block" gap="base">
           <s-checkbox label="Enable Pickup Only" checked={enabled} onChange={(event) => setEnabled((event.target as HTMLInputElement).checked)} disabled={!product || isSaving} />
           <s-text-field label="Storefront message" value={message} onInput={(event) => setMessage((event.target as HTMLInputElement).value)} disabled={!product || isSaving} />
-          <s-paragraph>
-            {pickupProfileName
-              ? `Enabling this rule assigns the product to "${pickupProfileName}". Disabling it returns the product to your default shipping profile.`
-              : "No pickup shipping profile is configured yet. Set one from the Product rules page before enabling this rule."}
-          </s-paragraph>
-          <s-link href="/app">Manage pickup shipping profile</s-link>
+          {initial.marketDrivenShipping ? (
+            <s-paragraph>
+              Your store uses market-driven shipping, so this rule is enforced at checkout: shipping and delivery options are hidden when the cart contains this product.
+            </s-paragraph>
+          ) : (
+            <s-paragraph>
+              {pickupProfileName
+                ? `Enabling this rule assigns the product to "${pickupProfileName}". Disabling it returns the product to your default shipping profile.`
+                : "No pickup shipping profile is configured yet. Set one from the Product rules page before enabling this rule."}
+            </s-paragraph>
+          )}
+          {!initial.checkoutEnabled && (
+            <s-banner tone={initial.marketDrivenShipping ? "warning" : "info"}>
+              The Pickup Only checkout rule is off, so shipping isn&apos;t hidden at checkout yet. Turn it on from the Product rules page.
+            </s-banner>
+          )}
+          <s-link href="/app">{initial.marketDrivenShipping ? "Manage Pickup Only checkout rule" : "Manage pickup shipping profile"}</s-link>
         </s-stack>
       </s-section>
     </s-page>

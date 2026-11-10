@@ -1,0 +1,4 @@
+{
+  "name": "Pickup Only delivery rules",
+  "description": "Hides shipping and delivery options for carts that contain Pickup Only products."
+}

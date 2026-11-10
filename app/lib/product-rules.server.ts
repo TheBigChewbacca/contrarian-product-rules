@@ -7,6 +7,7 @@ import {
   type ProductRulesV1,
 } from "./product-rules";
 import { TtlCache, parseTtlMs } from "./ttl-cache.server";
+import { isMarketDrivenShipping } from "./pickup-checkout.server";
 
 const NAMESPACE = "contrarian_product_rules";
 const KEY = "rules";
@@ -65,7 +66,7 @@ function shippingProfileError(error: unknown): GraphQLUserError {
     console.error("Shopify denied delivery profile access", { error: message });
     return {
       message:
-        "Shopify denied access to this merchant shipping profile. The app's read_shipping/write_shipping scopes are present, but Shopify may require shipping access approval for the app or the store may use market-driven shipping. Request the capability in the Partner Dashboard, then reinstall, or migrate this workflow to an app-owned delivery profile.",
+        "Shopify denied access to this merchant shipping profile. Check that the app has shipping access approved in the Partner Dashboard, then reinstall. Pickup Only is still enforced at checkout if the Pickup Only checkout rule is turned on.",
     };
   }
   console.error("Unable to update the Shopify delivery profile", { error: message });
@@ -387,12 +388,10 @@ export async function loadProduct(
 export async function loadDeliveryProfiles(
   admin: AdminApiContext,
 ): Promise<DeliveryProfile[]> {
-  // Delivery profiles are the current Admin GraphQL model; this intentionally
-  // does not use legacy shipping_zones or carrier_services APIs. Merchant-owned
-  // profiles can still be restricted on market-driven stores, so callers must
-  // treat an empty result as unavailable rather than as proof that no profile exists.
-  // TODO: Confirm whether this merchant needs an app-owned delivery profile or
-  // manual migration in Shopify admin before enabling profile writes.
+  // Legacy shipping model only. Merchant delivery profiles don't exist on
+  // shops using market-driven shipping, so callers check
+  // isMarketDrivenShipping first. Treat an empty result as unavailable rather
+  // than as proof that no profile exists.
   try {
     const profiles: DeliveryProfile[] = [];
     let after: string | undefined;
@@ -735,14 +734,7 @@ export async function reconcileRulesFromTags(
   const sideEffectErrors: GraphQLUserError[] = [];
 
   if (pickupChanged) {
-    const [pickupProfileId, deliveryProfiles] = await Promise.all([
-      loadPickupShippingProfile(shop),
-      loadDeliveryProfiles(admin),
-    ]);
-    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
-    sideEffectErrors.push(
-      ...(await syncProductPickupProfile(admin, product.variantIds, wantsPickup, pickupProfileId, defaultProfileId)),
-    );
+    sideEffectErrors.push(...(await syncPickupShipping(admin, shop, product.variantIds, wantsPickup)));
   }
 
   if (preorderChanged) {
@@ -768,9 +760,7 @@ export async function assignProductToDeliveryProfile(
   // Compliance note: deliveryProfileUpdate is the supported delivery-profile
   // mutation for variant association. It preserves the merchant's existing
   // profile zones and rates; it does not recreate legacy shipping rates.
-  // On market-driven stores Shopify may reject writes to merchant-owned
-  // profiles. In that case the merchant must migrate this rule to an app-owned
-  // profile or configure the equivalent rule manually in Shopify admin.
+  // Legacy shipping model only: callers skip this on market-driven shops.
   try {
     return await withShippingRetry(async () => {
       const response = await admin.graphql(
@@ -868,6 +858,27 @@ export async function syncProductPickupProfile(
   }
 
   return errors.filter((error) => error.message);
+}
+
+// Applies a Pickup Only change to the shop's shipping setup. On legacy shops
+// that means moving the variants between the merchant's pickup profile and
+// the default profile. Shops on market-driven shipping have no merchant
+// profiles to move between, so nothing is written there: the
+// pickup-only-delivery checkout function enforces the rule from the product
+// tag instead.
+export async function syncPickupShipping(
+  admin: AdminApiContext,
+  shop: string,
+  variantIds: string[],
+  enabled: boolean,
+): Promise<GraphQLUserError[]> {
+  if (await isMarketDrivenShipping(admin, shop)) return [];
+  const [pickupProfileId, deliveryProfiles] = await Promise.all([
+    loadPickupShippingProfile(shop),
+    loadDeliveryProfiles(admin),
+  ]);
+  const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
+  return syncProductPickupProfile(admin, variantIds, enabled, pickupProfileId, defaultProfileId);
 }
 
 export type DeliveryProfileAssignment = {

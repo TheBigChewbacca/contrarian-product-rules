@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate, clearCachedSessions } from "../shopify.server";
 import { clearShopSettingsCache } from "../lib/product-rules.server";
+import { clearShippingModelCache } from "../lib/pickup-checkout.server";
 import db from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -19,6 +20,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // keep serving the uninstalled shop's session and settings.
   clearCachedSessions();
   clearShopSettingsCache(shop);
+  clearShippingModelCache(shop);
 
   return new Response();
 };

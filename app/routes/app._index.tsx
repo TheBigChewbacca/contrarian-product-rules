@@ -23,11 +23,16 @@ import {
   resolveProductRules,
   savePickupShippingProfile,
   saveProductRules,
-  syncProductPickupProfile,
+  syncPickupShipping,
   backfillProductRuleTags,
   type GraphQLUserError,
   type PickupProfileMismatch,
 } from "../lib/product-rules.server";
+import {
+  enablePickupCheckout,
+  isMarketDrivenShipping,
+  loadPickupCheckoutStatus,
+} from "../lib/pickup-checkout.server";
 import "../styles/rule-dashboard.css";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -45,12 +50,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ? [search, `tag:'${productRuleTag(ruleKey)}'`].filter(Boolean).join(" ")
     : search;
 
-  const [productsPage, deliveryProfiles, pickupShippingProfileId] = await Promise.all([
+  // Merchant delivery profiles don't exist on market-driven shops, so the
+  // profile picker and assignment audit only load on legacy shops.
+  const marketDrivenShipping = await isMarketDrivenShipping(admin, session.shop);
+  const [productsPage, deliveryProfiles, pickupShippingProfileId, checkoutStatus] = await Promise.all([
     loadProductRuleSummaries(admin, shopifySearch, cursor),
-    loadDeliveryProfiles(admin),
+    marketDrivenShipping ? Promise.resolve([]) : loadDeliveryProfiles(admin),
     loadPickupShippingProfile(session.shop),
+    loadPickupCheckoutStatus(admin),
   ]);
-  return { ...productsPage, deliveryProfiles, pickupShippingProfileId, rule, search, cursor, activeOnly };
+  return {
+    ...productsPage,
+    deliveryProfiles,
+    pickupShippingProfileId,
+    marketDrivenShipping,
+    checkoutStatus,
+    rule,
+    search,
+    cursor,
+    activeOnly,
+  };
 };
 
 function auditErrorMessage(error: unknown): string {
@@ -62,7 +81,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = String(formData.get("action") || "toggle");
 
-if (actionType === "profile") {
+  if (actionType === "enableCheckout") {
+    const errors = await enablePickupCheckout(admin);
+    return errors.length > 0
+      ? { ok: false, message: errors.map((error) => error.message).join(" ") }
+      : { ok: true, checkoutMessage: "Pickup Only checkout rule is on." };
+  }
+
+  if (
+    (actionType === "profile" || actionType === "audit" || actionType === "fix") &&
+    (await isMarketDrivenShipping(admin, session.shop))
+  ) {
+    return {
+      ok: false,
+      message: "Your store uses market-driven shipping, so there are no shipping profiles to manage. Pickup Only is enforced by the checkout rule instead.",
+    };
+  }
+
+  if (actionType === "profile") {
     const profileId = String(formData.get("profileId") || "");
     const previousProfileId = await loadPickupShippingProfile(session.shop);
     if (previousProfileId !== profileId) {
@@ -156,12 +192,7 @@ if (actionType === "profile") {
 
   let profileErrors: GraphQLUserError[] = [];
   if (rule === "pickup") {
-    const [pickupProfileId, deliveryProfiles] = await Promise.all([
-      loadPickupShippingProfile(session.shop),
-      loadDeliveryProfiles(admin),
-    ]);
-    const defaultProfileId = resolveDefaultDeliveryProfileId(deliveryProfiles);
-    profileErrors = await syncProductPickupProfile(admin, product.variantIds, enabled, pickupProfileId, defaultProfileId);
+    profileErrors = await syncPickupShipping(admin, session.shop, product.variantIds, enabled);
   }
 
   const allErrors = [...errors, ...profileErrors];
@@ -171,11 +202,22 @@ if (actionType === "profile") {
 };
 
 export default function Index() {
-  const { products, pageInfo, deliveryProfiles, pickupShippingProfileId, rule, search, activeOnly } = useLoaderData<typeof loader>();
+  const {
+    products,
+    pageInfo,
+    deliveryProfiles,
+    pickupShippingProfileId,
+    marketDrivenShipping,
+    checkoutStatus,
+    rule,
+    search,
+    activeOnly,
+  } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const fetcher = useFetcher<typeof action>();
   const auditFetcher = useFetcher<typeof action>();
   const tagSyncFetcher = useFetcher<typeof action>();
+  const checkoutFetcher = useFetcher<typeof action>();
   const navigate = useNavigate();
   const [searchValue, setSearchValue] = useState(search);
   const activeRule = rule === "preorder" ? "preorder" : "pickup";
@@ -251,7 +293,7 @@ export default function Index() {
             {tagSyncFetcher.state !== "idle" ? "Syncing tags…" : "Sync tags"}
           </button>
           <div className="rule-actions">
-            {activeRule === "pickup" && (
+            {activeRule === "pickup" && !marketDrivenShipping && (
               <>
                 <s-select label="Pickup Shipping Profile" value={pickupShippingProfileId} onChange={(event) => fetcher.submit({ action: "profile", profileId: (event.target as HTMLSelectElement).value }, { method: "post" })}>
                   <s-option value="">No profile</s-option>
@@ -270,6 +312,15 @@ export default function Index() {
             <s-link href={activeRule === "preorder" ? "/app/preorder" : "/app/pickup"}>Add product with this rule</s-link>
           </div>
         </div>
+        {activeRule === "pickup" && (
+          <PickupCheckoutBanner
+            marketDrivenShipping={marketDrivenShipping}
+            status={checkoutStatus}
+            submitting={checkoutFetcher.state !== "idle"}
+            result={checkoutFetcher.data}
+            onEnable={() => checkoutFetcher.submit({ action: "enableCheckout" }, { method: "post" })}
+          />
+        )}
         {activeRule === "pickup" && auditFetcher.data?.ok === false && (
           <s-banner tone="critical">
             <p>{auditFetcher.data.message}</p>
@@ -340,6 +391,47 @@ export default function Index() {
         {fetcher.data?.ok && !fetcher.data?.auditMessage && <s-banner tone="success">Rule updated.</s-banner>}
       </s-section>
     </s-page>
+  );
+}
+
+type PickupCheckoutBannerProps = {
+  marketDrivenShipping: boolean;
+  status: Awaited<ReturnType<typeof loadPickupCheckoutStatus>>;
+  submitting: boolean;
+  result: { ok: boolean; message?: string; checkoutMessage?: string } | undefined;
+  onEnable: () => void;
+};
+
+// Pickup Only is enforced at checkout by the pickup-only-delivery function.
+// On market-driven shops that is the only enforcement, so an inactive rule is
+// a warning there. On legacy shops the profile sync still applies.
+function PickupCheckoutBanner({ marketDrivenShipping, status, submitting, result, onEnable }: PickupCheckoutBannerProps) {
+  if (result?.ok && result.checkoutMessage) {
+    return <s-banner tone="success"><p>{result.checkoutMessage}</p></s-banner>;
+  }
+  if (status.available && status.enabled) {
+    return (
+      <s-banner tone="success">
+        <p>
+          Pickup Only checkout rule is on. Shipping and delivery options are hidden for carts with Pickup Only products.
+          {marketDrivenShipping ? " Your store uses market-driven shipping, so shipping profiles aren't used." : ""}
+        </p>
+      </s-banner>
+    );
+  }
+  return (
+    <s-banner tone={marketDrivenShipping ? "warning" : "info"}>
+      <p>
+        {marketDrivenShipping
+          ? "Your store uses market-driven shipping, so Pickup Only can no longer use a shipping profile. Turn on the checkout rule so Pickup Only products can't be shipped."
+          : "Turn on the Pickup Only checkout rule to hide shipping options for Pickup Only products at checkout. It keeps working when your store moves to market-driven shipping."}
+      </p>
+      {!status.available && <p>Unavailable right now: {status.message}</p>}
+      {result?.ok === false && result.message && <p>{result.message}</p>}
+      <button type="button" className="edit-button" disabled={submitting || !status.available} onClick={onEnable}>
+        {submitting ? "Turning on…" : "Turn on checkout rule"}
+      </button>
+    </s-banner>
   );
 }
 

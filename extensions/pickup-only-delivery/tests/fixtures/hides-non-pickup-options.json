@@ -1,0 +1,39 @@
+{
+  "payload": {
+    "export": "cart-delivery-options-transform-run",
+    "target": "cart.delivery-options.transform.run",
+    "input": {
+      "cart": {
+        "deliveryGroups": [
+          {
+            "cartLines": [
+              { "merchandise": { "__typename": "ProductVariant", "product": { "pickupOnly": false } } },
+              { "merchandise": { "__typename": "ProductVariant", "product": { "pickupOnly": true } } }
+            ],
+            "deliveryOptions": [
+              { "handle": "standard", "deliveryMethodType": "SHIPPING" },
+              { "handle": "local", "deliveryMethodType": "LOCAL" },
+              { "handle": "locker", "deliveryMethodType": "PICKUP_POINT" },
+              { "handle": "store-pickup", "deliveryMethodType": "PICK_UP" }
+            ]
+          },
+          {
+            "cartLines": [
+              { "merchandise": { "__typename": "ProductVariant", "product": { "pickupOnly": false } } }
+            ],
+            "deliveryOptions": [
+              { "handle": "standard-2", "deliveryMethodType": "SHIPPING" }
+            ]
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        { "deliveryOptionHide": { "deliveryOptionHandle": "standard" } },
+        { "deliveryOptionHide": { "deliveryOptionHandle": "local" } },
+        { "deliveryOptionHide": { "deliveryOptionHandle": "locker" } }
+      ]
+    }
+  }
+}

@@ -1,0 +1,22 @@
+# The tag mirrors PICKUP_ONLY_TAG in app/lib/product-rules.server.ts. The app
+# keeps it in sync with each product's Pickup Only rule.
+query CartDeliveryOptionsTransformRunInput {
+  cart {
+    deliveryGroups {
+      cartLines {
+        merchandise {
+          __typename
+          ... on ProductVariant {
+            product {
+              pickupOnly: hasAnyTag(tags: ["cpr-pickup-only"])
+            }
+          }
+        }
+      }
+      deliveryOptions {
+        handle
+        deliveryMethodType
+      }
+    }
+  }
+}

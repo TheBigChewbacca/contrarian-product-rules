@@ -27,13 +27,36 @@ disable the rule and verify it disappears. Reopen the product in the app to
 verify the saved settings load, and verify a legacy-only product shows the
 legacy fallback indicator.
 
-This phase displays Pickup Only messaging only. It does not restrict checkout,
-delivery, or shipping.
+### Pickup Only at checkout
 
-The app can associate all variants of a selected product with an existing
-shipping profile. Configure that profile in Shopify admin with only a local
-pickup delivery method; assigning a product to a profile does not itself
-create pickup-only rates or enforce checkout restrictions.
+The `pickup-only-delivery` delivery customization function
+(`extensions/pickup-only-delivery`) enforces Pickup Only at checkout. When a
+delivery group contains a product tagged `cpr-pickup-only`, it hides that
+group's shipping, local delivery and pickup-point options and leaves store
+pickup. Merchants turn it on with **Turn on checkout rule** on the Pickup Only
+tab of the Product rules page. This needs the `read_delivery_customizations`
+and `write_delivery_customizations` scopes, so existing stores must approve the
+new scopes after deploy.
+
+### Shipping models
+
+Shopify is moving every store to
+[market-driven shipping](https://shopify.dev/docs/apps/build/orders-fulfillment/market-driven-shipping/upgrade-your-app)
+by July 1, 2027. On those stores merchant shipping lives in Markets and there
+are no merchant delivery profiles. The app checks
+`ShopFeatures.marketDrivenShipping` per shop:
+
+- **Legacy stores:** the app also moves a Pickup Only product's variants into
+  the pickup shipping profile chosen on the Product rules page, and back to the
+  default profile when the rule is turned off. Configure that profile in
+  Shopify admin with only a local pickup delivery method.
+- **Market-driven stores:** the app doesn't read or write delivery profiles.
+  The profile picker and assignment check are hidden, and the checkout function
+  is the only enforcement.
+
+After the deploy is verified on a store with the market-driven shipping
+feature preview, submit Shopify's compatibility self-attestation form (linked
+from the upgrade guide) so merchants on this app can be moved over.
 
 After a customer submits Add to cart or Buy it now for an enabled Pickup Only
 product, the theme extension displays a confirmation message. This is
